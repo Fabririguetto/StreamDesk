@@ -1,0 +1,40 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "StreamDesk.Common", "StreamDesk.Common\StreamDesk.Common.csproj", "{1FBACBA3-D2DC-463E-A293-5D5CC5251663}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "StreamDesk.Sender", "StreamDesk.Sender\StreamDesk.Sender.csproj", "{8017823C-C549-443C-81E7-8B8871813875}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "StreamDesk.Receiver", "StreamDesk.Receiver\StreamDesk.Receiver.csproj", "{DAC161C6-A523-4C68-ACEA-C2A31FD7060C}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "StreamDesk.Tests", "StreamDesk.Tests\StreamDesk.Tests.csproj", "{927DC1F7-DD40-4590-81F4-D00A3037C812}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{1FBACBA3-D2DC-463E-A293-5D5CC5251663}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{1FBACBA3-D2DC-463E-A293-5D5CC5251663}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{1FBACBA3-D2DC-463E-A293-5D5CC5251663}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{1FBACBA3-D2DC-463E-A293-5D5CC5251663}.Release|Any CPU.Build.0 = Release|Any CPU
+		{8017823C-C549-443C-81E7-8B8871813875}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8017823C-C549-443C-81E7-8B8871813875}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8017823C-C549-443C-81E7-8B8871813875}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8017823C-C549-443C-81E7-8B8871813875}.Release|Any CPU.Build.0 = Release|Any CPU
+		{DAC161C6-A523-4C68-ACEA-C2A31FD7060C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{DAC161C6-A523-4C68-ACEA-C2A31FD7060C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{DAC161C6-A523-4C68-ACEA-C2A31FD7060C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{DAC161C6-A523-4C68-ACEA-C2A31FD7060C}.Release|Any CPU.Build.0 = Release|Any CPU
+		{927DC1F7-DD40-4590-81F4-D00A3037C812}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{927DC1F7-DD40-4590-81F4-D00A3037C812}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{927DC1F7-DD40-4590-81F4-D00A3037C812}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{927DC1F7-DD40-4590-81F4-D00A3037C812}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal
