@@ -17,9 +17,9 @@ public class MfH264HardwareDecoder : IDisposable
 
     private readonly ID3D11Device _device;
     private readonly ID3D11DeviceContext _context;
-    private readonly int _width;
-    private readonly int _height;
-    private readonly byte[] _bgraBuffer;
+    private int _width;
+    private int _height;
+    private byte[] _bgraBuffer;
     private int _outputBufferSize = 4 * 1024 * 1024;
     private long _frameIndex;
 
@@ -222,6 +222,13 @@ public class MfH264HardwareDecoder : IDisposable
             var result = _decoder.ProcessOutput(ProcessOutputFlags.None, 1, ref outputDataBuffer, out _);
             if (result.Failure)
             {
+                // MF_E_TRANSFORM_STREAM_CHANGE = 0xC00D6D61
+                if ((uint)result.Code == 0xC00D6D61)
+                {
+                    HandleStreamChange();
+                    continue;
+                }
+
                 // MF_E_TRANSFORM_NEED_MORE_INPUT = 0xC00D6D72 (-1072870030)
                 if ((uint)result.Code != 0xC00D6D72)
                 {
@@ -235,8 +242,7 @@ public class MfH264HardwareDecoder : IDisposable
                 break;
             }
 
-            using var sample = outputDataBuffer.Sample;
-            using var buffer = sample.ConvertToContiguousBuffer();
+            using var buffer = outSample.ConvertToContiguousBuffer();
 
             IntPtr pData;
             buffer.Lock(out pData, out _, out int currentLength);
@@ -254,6 +260,61 @@ public class MfH264HardwareDecoder : IDisposable
                 buffer.Unlock();
                 break;
             }
+        }
+    }
+
+    private void HandleStreamChange()
+    {
+        if (_decoder == null) return;
+
+        try
+        {
+            var outputType = MediaFactory.MFCreateMediaType();
+            outputType.Set(MediaTypeAttributeKeys.MajorType, MediaTypeGuids.Video);
+            outputType.Set(MediaTypeAttributeKeys.Subtype, VideoFormatGuids.NV12);
+            _decoder.SetOutputType(0, outputType, 0);
+
+            var currentType = _decoder.GetOutputCurrentType(0);
+            if (currentType != null)
+            {
+                MediaFactory.MFGetAttributeSize(currentType, MediaTypeAttributeKeys.FrameSize, out uint w, out uint h);
+                if (w > 0 && h > 0 && ((int)w != _width || (int)h != _height))
+                {
+                    Console.WriteLine($"[Decoder] Cambio dinámico de resolución detectado en stream: {w}x{h}");
+                    _width = (int)w;
+                    _height = (int)h;
+                    _bgraBuffer = new byte[_width * _height * 4];
+
+                    _renderSrv?.Dispose();
+                    _renderTexture?.Dispose();
+
+                    var texDesc = new Texture2DDescription
+                    {
+                        Width = (uint)_width,
+                        Height = (uint)_height,
+                        MipLevels = 1,
+                        ArraySize = 1,
+                        Format = Format.B8G8R8A8_UNorm,
+                        SampleDescription = new SampleDescription(1, 0),
+                        Usage = ResourceUsage.Default,
+                        BindFlags = BindFlags.ShaderResource | BindFlags.RenderTarget,
+                        CPUAccessFlags = CpuAccessFlags.None
+                    };
+                    _renderTexture = _device.CreateTexture2D(texDesc);
+                    _renderSrv = _device.CreateShaderResourceView(_renderTexture);
+                }
+            }
+
+            try
+            {
+                var streamInfo = _decoder.GetOutputStreamInfo(0);
+                _outputBufferSize = Math.Max(streamInfo.Size, 4 * 1024 * 1024);
+            }
+            catch { }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Decoder Stream Change] Error: {ex.Message}");
         }
     }
 

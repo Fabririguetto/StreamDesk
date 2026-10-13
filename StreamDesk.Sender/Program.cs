@@ -24,6 +24,36 @@ public static class Program
 
     public static async Task Main(string[] args)
     {
+        AppDomain.CurrentDomain.UnhandledException += (s, e) =>
+        {
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine($"\n[CRASH NO CONTROLADO]: {e.ExceptionObject}");
+            Console.ResetColor();
+        };
+
+        TaskScheduler.UnobservedTaskException += (s, e) =>
+        {
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine($"\n[TASK CRASH]: {e.Exception}");
+            Console.ResetColor();
+        };
+
+        try
+        {
+            await RunAsync(args);
+        }
+        catch (Exception ex)
+        {
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine($"\n[FATAL ERROR EN SENDER]: {ex}");
+            Console.ResetColor();
+            Console.WriteLine("\nPresiona cualquier tecla para continuar...");
+            try { Console.ReadKey(); } catch { }
+        }
+    }
+
+    private static async Task RunAsync(string[] args)
+    {
         Console.Title = "StreamDesk - Notebook Screen Sender (H.264 Low-Latency)";
         Console.ForegroundColor = ConsoleColor.Cyan;
         Console.WriteLine("==================================================================");
@@ -36,15 +66,30 @@ public static class Program
         if (screenWidth <= 0) screenWidth = 1920;
         if (screenHeight <= 0) screenHeight = 1080;
 
+        bool forceNative = args.Any(a => a.Equals("--native", StringComparison.OrdinalIgnoreCase) || a.Equals("--4k", StringComparison.OrdinalIgnoreCase));
+        int targetWidth = screenWidth;
+        int targetHeight = screenHeight;
+
+        if (!forceNative && screenWidth > 1920)
+        {
+            double aspect = (double)screenWidth / screenHeight;
+            targetWidth = 1920;
+            targetHeight = (int)Math.Round(1920.0 / aspect);
+            if ((targetWidth % 2) != 0) targetWidth--;
+            if ((targetHeight % 2) != 0) targetHeight--;
+            Console.WriteLine($"[Optimizador] Pantalla 4K detectada ({screenWidth}x{screenHeight}). Escalando a {targetWidth}x{targetHeight} @ 60 FPS para máxima fluidez (<20ms).");
+            Console.WriteLine("[Optimizador] (Usa --4k o --native si deseas emitir en resolución 4K nativa)");
+        }
+
         var config = new StreamConfig
         {
-            TargetWidth = screenWidth,
-            TargetHeight = screenHeight,
+            TargetWidth = targetWidth,
+            TargetHeight = targetHeight,
             TargetFps = 60,
             BitrateKbps = 25000 // 25 Mbps para LAN Ethernet
         };
 
-        Console.WriteLine($"[Config] Resolución nativa detectada: {config.TargetWidth}x{config.TargetHeight} @ {config.TargetFps} FPS");
+        Console.WriteLine($"[Config] Resolución de streaming: {config.TargetWidth}x{config.TargetHeight} @ {config.TargetFps} FPS");
         Console.WriteLine($"[Config] Bitrate objetivo: {config.BitrateKbps / 1000} Mbps | Codec: {config.PreferredCodec}");
 
         using var cts = new CancellationTokenSource();
@@ -109,8 +154,8 @@ public static class Program
             .ToList();
         Console.WriteLine($"[Red] IP(s) local(es) de esta Notebook: {(localIps.Count > 0 ? string.Join(", ", localIps) : "127.0.0.1")}");
 
-        // Permite también fijar manualmente el destino si se pasa por parámetro CLI (ej. Sender.exe 192.168.0.221)
-        string? targetIp = args.Length > 0 ? args[0] : null;
+        string? targetIp = args.FirstOrDefault(a => !a.StartsWith("--") && IPAddress.TryParse(a, out _))
+            ?? args.FirstOrDefault(a => !a.StartsWith("--"));
         if (!string.IsNullOrEmpty(targetIp))
         {
             Console.WriteLine($"[Red] IP del Receptor especificada manualmente (Unicast directo): {targetIp}");

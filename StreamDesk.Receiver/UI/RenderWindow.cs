@@ -32,7 +32,7 @@ public class RenderWindow : Form
     private double _currentMbps;
     private long _lastMetricsTime = Stopwatch.GetTimestamp();
 
-    public RenderWindow(string senderIp, int videoPort = 5004, int controlPort = 5005)
+    public RenderWindow(string senderIp, int videoPort = 5004, int controlPort = 5005, int width = 1920, int height = 1080)
     {
         Text = "StreamDesk Receiver - Pantalla Remota (LAN Ethernet)";
         ClientSize = new Size(1280, 720);
@@ -41,18 +41,31 @@ public class RenderWindow : Form
         DoubleBuffered = true;
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.Opaque, true);
 
-        _senderControlEndPoint = new IPEndPoint(IPAddress.Parse(senderIp), controlPort);
+        if (!IPAddress.TryParse(senderIp, out var parsedIp))
+        {
+            parsedIp = IPAddress.Broadcast;
+        }
+
+        _senderControlEndPoint = new IPEndPoint(parsedIp, controlPort);
         _controlSocket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp)
         {
             EnableBroadcast = true
         };
+        try
+        {
+            const int SIO_UDP_CONNRESET = -1744830452;
+            _controlSocket.IOControl(SIO_UDP_CONNRESET, new byte[] { 0 }, null);
+        }
+        catch { }
 
-        // 1. Inicializar Renderizador DirectX 11 (1920x1080 con hardware scaling al HWND)
-        _renderer = new D3D11Renderer(Handle, 1920, 1080);
+        // 1. Inicializar Renderizador DirectX 11 con hardware scaling al HWND
+        int initialWidth = width > 0 ? width : 1920;
+        int initialHeight = height > 0 ? height : 1080;
+        _renderer = new D3D11Renderer(Handle, initialWidth, initialHeight);
         _renderer.RenderFrame(null);
 
         // 2. Inicializar Decodificador Hardware H.264
-        _decoder = new MfH264HardwareDecoder(_renderer.Device, _renderer.Context, 1920, 1080);
+        _decoder = new MfH264HardwareDecoder(_renderer.Device, _renderer.Context, initialWidth, initialHeight);
         _decoder.OnFrameDecoded += texture =>
         {
             _frameCount++;

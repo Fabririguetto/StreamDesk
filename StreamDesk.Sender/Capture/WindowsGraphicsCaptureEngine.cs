@@ -63,6 +63,8 @@ public class WindowsGraphicsCaptureEngine : ICaptureEngine
         _emitThread.Start();
     }
 
+    private readonly object _syncLock = new();
+
     private void OnFrameArrived(Direct3D11CaptureFramePool sender, object args)
     {
         if (!_isRunning || _disposed) return;
@@ -76,15 +78,18 @@ public class WindowsGraphicsCaptureEngine : ICaptureEngine
             using var texture = CaptureInterop.GetTextureFromSurface(frame.Surface);
             if (texture != null)
             {
-                if (_currentFrameTexture == null)
+                lock (_syncLock)
                 {
-                    var desc = texture.Description;
-                    desc.BindFlags = BindFlags.ShaderResource;
-                    desc.Usage = ResourceUsage.Default;
-                    desc.CPUAccessFlags = CpuAccessFlags.None;
-                    _currentFrameTexture = _d3d11Device.CreateTexture2D(desc);
+                    if (_currentFrameTexture == null)
+                    {
+                        var desc = texture.Description;
+                        desc.BindFlags = BindFlags.ShaderResource;
+                        desc.Usage = ResourceUsage.Default;
+                        desc.CPUAccessFlags = CpuAccessFlags.None;
+                        _currentFrameTexture = _d3d11Device.CreateTexture2D(desc);
+                    }
+                    _d3d11Context.CopyResource(_currentFrameTexture, texture);
                 }
-                _d3d11Context.CopyResource(_currentFrameTexture, texture);
             }
         }
         catch (Exception ex)
@@ -100,20 +105,33 @@ public class WindowsGraphicsCaptureEngine : ICaptureEngine
 
         while (_isRunning && !_disposed)
         {
-            long now = Stopwatch.GetTimestamp();
-            if (now >= nextTick)
+            try
             {
-                nextTick = now + targetIntervalTicks;
-
-                if (_currentFrameTexture != null)
+                long now = Stopwatch.GetTimestamp();
+                if (now >= nextTick)
                 {
-                    OnFrameCaptured?.Invoke(_currentFrameTexture, now);
+                    nextTick = now + targetIntervalTicks;
+
+                    ID3D11Texture2D? textureToEmit = null;
+                    lock (_syncLock)
+                    {
+                        textureToEmit = _currentFrameTexture;
+                    }
+
+                    if (textureToEmit != null)
+                    {
+                        OnFrameCaptured?.Invoke(textureToEmit, now);
+                    }
+                }
+                else
+                {
+                    int sleepMs = (int)((nextTick - now) * 1000 / Stopwatch.Frequency);
+                    if (sleepMs > 1) Thread.Sleep(1);
                 }
             }
-            else
+            catch (Exception ex)
             {
-                int sleepMs = (int)((nextTick - now) * 1000 / Stopwatch.Frequency);
-                if (sleepMs > 1) Thread.Sleep(1);
+                Console.WriteLine($"[WGC EmitLoop] Error: {ex.Message}");
             }
         }
     }
@@ -136,8 +154,12 @@ public class WindowsGraphicsCaptureEngine : ICaptureEngine
         _session = null;
         _framePool = null;
         _captureItem = null;
-        _currentFrameTexture?.Dispose();
-        _currentFrameTexture = null;
+
+        lock (_syncLock)
+        {
+            _currentFrameTexture?.Dispose();
+            _currentFrameTexture = null;
+        }
     }
 
     public void Dispose()

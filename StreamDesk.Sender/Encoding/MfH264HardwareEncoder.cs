@@ -294,8 +294,7 @@ public class MfH264HardwareEncoder : IDisposable
                 break;
             }
 
-            using var sample = outputDataBuffer.Sample;
-            using var buffer = sample.ConvertToContiguousBuffer();
+            using var buffer = outSample.ConvertToContiguousBuffer();
 
             IntPtr pData;
             buffer.Lock(out pData, out _, out int currentLength);

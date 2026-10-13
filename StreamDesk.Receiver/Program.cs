@@ -9,56 +9,79 @@ static class Program
     [STAThread]
     static void Main(string[] args)
     {
-        ApplicationConfiguration.Initialize();
-
-        string? senderIp = null;
-        int videoPort = StreamConfig.DefaultVideoPort;
-        int controlPort = StreamConfig.DefaultControlPort;
-
-        // 1. Si se pasa por línea de comandos (ej: Receiver.exe 192.168.1.45)
-        if (args.Length > 0 && !string.IsNullOrWhiteSpace(args[0]))
+        Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
+        AppDomain.CurrentDomain.UnhandledException += (s, e) =>
         {
-            senderIp = args[0];
-        }
-        else
+            MessageBox.Show($"Error fatal en Receiver:\n\n{e.ExceptionObject}", "StreamDesk Receiver - Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        };
+        Application.ThreadException += (s, e) =>
         {
-            // 2. Intentar descubrimiento automático en LAN vía UDP Broadcast
-            using var discovery = new LanDiscoveryService(isSender: false);
-            var discoveryTask = discovery.DiscoverSenderAsync(TimeSpan.FromSeconds(2.5));
-            var offer = discoveryTask.GetAwaiter().GetResult();
+            MessageBox.Show($"Error de UI en Receiver:\n\n{e.Exception}", "StreamDesk Receiver - Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        };
 
-            if (offer != null && !string.IsNullOrEmpty(offer.SenderIp))
+        try
+        {
+            ApplicationConfiguration.Initialize();
+
+            string? senderIp = null;
+            int videoPort = StreamConfig.DefaultVideoPort;
+            int controlPort = StreamConfig.DefaultControlPort;
+            int streamWidth = 1920;
+            int streamHeight = 1080;
+
+            // 1. Si se pasa por línea de comandos (ej: Receiver.exe 192.168.1.45)
+            if (args.Length > 0 && !string.IsNullOrWhiteSpace(args[0]))
             {
-                var choice = MessageBox.Show(
-                    $"Se detectó la Notebook emisora en la red:\n\n" +
-                    $"Equipo: {offer.SenderName}\n" +
-                    $"IP: {offer.SenderIp}\n" +
-                    $"Resolución: {offer.Width}x{offer.Height} @ {offer.Fps} FPS\n\n" +
-                    $"¿Deseas conectar ahora?",
-                    "StreamDesk - Emisor Detectado",
-                    MessageBoxButtons.YesNo,
-                    MessageBoxIcon.Information);
+                senderIp = args[0];
+            }
+            else
+            {
+                // 2. Intentar descubrimiento automático en LAN vía UDP Broadcast
+                using var discovery = new LanDiscoveryService(isSender: false);
+                var discoveryTask = discovery.DiscoverSenderAsync(TimeSpan.FromSeconds(2.0));
+                var offer = discoveryTask.GetAwaiter().GetResult();
 
-                if (choice == DialogResult.Yes)
+                if (offer != null && !string.IsNullOrEmpty(offer.SenderIp))
                 {
-                    senderIp = offer.SenderIp;
-                    videoPort = offer.VideoPort;
-                    controlPort = offer.ControlPort;
+                    streamWidth = offer.Width > 0 ? offer.Width : 1920;
+                    streamHeight = offer.Height > 0 ? offer.Height : 1080;
+
+                    var choice = MessageBox.Show(
+                        $"Se detectó la Notebook emisora en la red:\n\n" +
+                        $"Equipo: {offer.SenderName}\n" +
+                        $"IP: {offer.SenderIp}\n" +
+                        $"Resolución: {streamWidth}x{streamHeight} @ {offer.Fps} FPS\n\n" +
+                        $"¿Deseas conectar ahora?",
+                        "StreamDesk - Emisor Detectado",
+                        MessageBoxButtons.YesNo,
+                        MessageBoxIcon.Information);
+
+                    if (choice == DialogResult.Yes)
+                    {
+                        senderIp = offer.SenderIp;
+                        videoPort = offer.VideoPort;
+                        controlPort = offer.ControlPort;
+                    }
                 }
             }
-        }
 
-        // 3. Fallback: Si no se detectó o se rechazó, solicitar IP manualmente
-        if (string.IsNullOrEmpty(senderIp))
-        {
-            senderIp = PromptForIpAddress();
+            // 3. Fallback: Si no se detectó o se rechazó, solicitar IP manualmente
             if (string.IsNullOrEmpty(senderIp))
             {
-                return; // Usuario canceló
+                senderIp = PromptForIpAddress();
+                if (string.IsNullOrEmpty(senderIp))
+                {
+                    // Si el usuario cancela o cierra el diálogo, escuchar en broadcast predeterminado en vez de cerrar
+                    senderIp = StreamConfig.DefaultBroadcastSubnet;
+                }
             }
-        }
 
-        Application.Run(new RenderWindow(senderIp, videoPort, controlPort));
+            Application.Run(new RenderWindow(senderIp, videoPort, controlPort, streamWidth, streamHeight));
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Fallo al iniciar StreamDesk Receiver:\n\n{ex}", "StreamDesk Receiver - Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
     }
 
     private static string? PromptForIpAddress()
