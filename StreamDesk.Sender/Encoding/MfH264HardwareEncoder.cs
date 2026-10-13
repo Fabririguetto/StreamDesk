@@ -7,10 +7,11 @@ namespace StreamDesk.Sender.Encoding;
 
 /// <summary>
 /// Codificador de video H.264 de ultra baja latencia acelerado por hardware mediante Windows Media Foundation (MFT).
-/// Soporta decodificadores/codificadores asíncronos y síncronos con desbloqueo automático de MF_TRANSFORM_ASYNC_UNLOCK.
+/// Gestiona buffers asíncronos y drenado continuo de salida para evitar errores MF_E_NOTACCEPTING.
 /// </summary>
 public class MfH264HardwareEncoder : IDisposable
 {
+    private const uint MF_E_NOTACCEPTING = 0xC00D36B5;
     private static readonly Guid GuidAsyncUnlock = new("2477308d-c710-4ec7-bb4b-32b0a944ae4b"); // MF_TRANSFORM_ASYNC_UNLOCK
 
     private readonly int _width;
@@ -45,7 +46,7 @@ public class MfH264HardwareEncoder : IDisposable
         MediaFactory.MFStartup(true);
 
         var h264Type = new RegisterTypeInfo { GuidMajorType = MediaTypeGuids.Video, GuidSubtype = VideoFormatGuids.H264 };
-        uint flags = 0x0000003F; // MFT_ENUM_FLAG_ALL (Hardware NVENC, QuickSync, AMF y software)
+        uint flags = 0x0000003F; // MFT_ENUM_FLAG_ALL
         using var activates = MediaFactory.MFTEnumEx(TransformCategoryGuids.VideoEncoder, flags, null, h264Type);
 
         foreach (var act in activates)
@@ -56,17 +57,13 @@ public class MfH264HardwareEncoder : IDisposable
                 candidate = act.ActivateObject<IMFTransform>();
                 if (candidate == null) continue;
 
-                // Desbloquear capacidades asíncronas para encoders por hardware (evita error MF_E_TRANSFORM_ASYNC_LOCKED)
                 try
                 {
                     candidate.Attributes?.Set(GuidAsyncUnlock, 1);
                 }
-                catch
-                {
-                    // Algunos encoders no exponen atributos de desbloqueo
-                }
+                catch { }
 
-                // 1. Configurar tipo de medio de salida (H.264)
+                // 1. Configurar tipo de salida (H.264)
                 var outputType = MediaFactory.MFCreateMediaType();
                 outputType.Set(MediaTypeAttributeKeys.MajorType, MediaTypeGuids.Video);
                 outputType.Set(MediaTypeAttributeKeys.Subtype, VideoFormatGuids.H264);
@@ -78,7 +75,7 @@ public class MfH264HardwareEncoder : IDisposable
 
                 candidate.SetOutputType(0, outputType, 0);
 
-                // 2. Configurar tipo de medio de entrada (NV12)
+                // 2. Configurar tipo de entrada (NV12)
                 var inputType = MediaFactory.MFCreateMediaType();
                 inputType.Set(MediaTypeAttributeKeys.MajorType, MediaTypeGuids.Video);
                 inputType.Set(MediaTypeAttributeKeys.Subtype, VideoFormatGuids.NV12);
@@ -90,7 +87,7 @@ public class MfH264HardwareEncoder : IDisposable
                 candidate.SetInputType(0, inputType, 0);
 
                 _encoder = candidate;
-                break; // Configuración exitosa
+                break;
             }
             catch (Exception ex)
             {
@@ -104,7 +101,7 @@ public class MfH264HardwareEncoder : IDisposable
             throw new InvalidOperationException("No se encontró ningún codificador H.264 compatible en el sistema.");
         }
 
-        // 3. Crear textura staging D3D11 para transferencia eficiente en GPU
+        // 3. Crear textura staging D3D11
         var desc = new Texture2DDescription
         {
             Width = (uint)_width,
@@ -176,7 +173,7 @@ public class MfH264HardwareEncoder : IDisposable
 
             _context.Unmap(_stagingTexture, 0);
 
-            // Crear IMFSample
+            // Crear IMFSample con el buffer NV12
             using var sample = MediaFactory.MFCreateSample();
             using var mediaBuffer = MediaFactory.MFCreateMemoryBuffer(nv12Size);
 
@@ -191,8 +188,23 @@ public class MfH264HardwareEncoder : IDisposable
             sample.SampleTime = sampleTime;
             sample.SampleDuration = 10_000_000L / _fps;
 
-            _encoder.ProcessInput(0, sample, 0);
-            PullEncodedData();
+            // Drenar cualquier salida previa pendiente
+            DrainOutput();
+
+            // Enviar sample al codificador
+            try
+            {
+                _encoder.ProcessInput(0, sample, 0);
+            }
+            catch (SharpGen.Runtime.SharpGenException ex) when ((uint)ex.HResult == MF_E_NOTACCEPTING)
+            {
+                // El buffer del codificador estaba saturado: drenar inmediatamente y reintentar
+                DrainOutput();
+                _encoder.ProcessInput(0, sample, 0);
+            }
+
+            // Drenar los datos codificados generados por este frame
+            DrainOutput();
         }
         catch (Exception ex)
         {
@@ -200,22 +212,27 @@ public class MfH264HardwareEncoder : IDisposable
         }
     }
 
-    private void PullEncodedData()
+    private void DrainOutput()
     {
         if (_encoder == null) return;
 
-        using var outSample = MediaFactory.MFCreateSample();
-        using var outBuffer = MediaFactory.MFCreateMemoryBuffer(1024 * 1024);
-        outSample.AddBuffer(outBuffer);
-
-        var outputDataBuffer = new OutputDataBuffer
+        while (true)
         {
-            Sample = outSample
-        };
+            using var outSample = MediaFactory.MFCreateSample();
+            using var outBuffer = MediaFactory.MFCreateMemoryBuffer(1024 * 1024); // 1 MB buffer para NALU
+            outSample.AddBuffer(outBuffer);
 
-        var result = _encoder.ProcessOutput(ProcessOutputFlags.None, 1, ref outputDataBuffer, out _);
-        if (result.Success && outputDataBuffer.Sample != null)
-        {
+            var outputDataBuffer = new OutputDataBuffer
+            {
+                Sample = outSample
+            };
+
+            var result = _encoder.ProcessOutput(ProcessOutputFlags.None, 1, ref outputDataBuffer, out _);
+            if (result.Failure || outputDataBuffer.Sample == null)
+            {
+                break; // No hay más muestras listas (NEED_MORE_INPUT)
+            }
+
             using var sample = outputDataBuffer.Sample;
             using var buffer = sample.ConvertToContiguousBuffer();
 
@@ -232,6 +249,7 @@ public class MfH264HardwareEncoder : IDisposable
             else
             {
                 buffer.Unlock();
+                break;
             }
         }
     }

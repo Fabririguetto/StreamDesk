@@ -1,4 +1,5 @@
 using System;
+using System.Runtime.InteropServices;
 using Vortice.MediaFoundation;
 using Xunit;
 
@@ -7,10 +8,9 @@ namespace StreamDesk.Tests;
 public class MftTests
 {
     private static readonly Guid GuidAsyncUnlock = new("2477308d-c710-4ec7-bb4b-32b0a944ae4b"); // MF_TRANSFORM_ASYNC_UNLOCK
-    private static readonly Guid GuidAsync = new("a2142eb9-80c9-4f61-a1ca-98d603d7723a");       // MF_TRANSFORM_ASYNC
 
     [Fact]
-    public void EnumerateEncoders_TestAsyncUnlock()
+    public void TestEncodingAndDraining()
     {
         MediaFactory.MFStartup(true);
 
@@ -26,16 +26,7 @@ public class MftTests
 
             try
             {
-                // Desbloquear si tiene atributos
-                try
-                {
-                    var attributes = transform.Attributes;
-                    attributes?.Set(GuidAsyncUnlock, 1);
-                }
-                catch
-                {
-                    // Algunos transforms no tienen atributos generales
-                }
+                try { transform.Attributes?.Set(GuidAsyncUnlock, 1); } catch { }
 
                 var outputType = MediaFactory.MFCreateMediaType();
                 outputType.Set(MediaTypeAttributeKeys.MajorType, MediaTypeGuids.Video);
@@ -69,7 +60,73 @@ public class MftTests
         }
 
         Assert.NotNull(workingTransform);
+
+        // Probar envío de 3 frames y drenado
+        int nv12Size = 1920 * 1080 * 3 / 2;
+        byte[] dummyData = new byte[nv12Size];
+
+        for (int frame = 0; frame < 5; frame++)
+        {
+            using var sample = MediaFactory.MFCreateSample();
+            using var mediaBuffer = MediaFactory.MFCreateMemoryBuffer(nv12Size);
+
+            IntPtr pBuffer;
+            mediaBuffer.Lock(out pBuffer, out _, out _);
+            Marshal.Copy(dummyData, 0, pBuffer, nv12Size);
+            mediaBuffer.Unlock();
+            mediaBuffer.CurrentLength = nv12Size;
+
+            sample.AddBuffer(mediaBuffer);
+            sample.SampleTime = (frame * 10_000_000L) / 60;
+            sample.SampleDuration = 10_000_000L / 60;
+
+            // Drenar primero si hay algo pendiente
+            DrainOutput(workingTransform);
+
+            try
+            {
+                workingTransform.ProcessInput(0, sample, 0);
+            }
+            catch (SharpGen.Runtime.SharpGenException ex) when ((uint)ex.HResult == 0xC00D36B5) // MF_E_NOTACCEPTING
+            {
+                Console.WriteLine("Got MF_E_NOTACCEPTING! Draining...");
+                DrainOutput(workingTransform);
+                workingTransform.ProcessInput(0, sample, 0); // Retry
+            }
+
+            DrainOutput(workingTransform);
+        }
+
         workingTransform.Dispose();
         MediaFactory.MFShutdown();
+    }
+
+    private static void DrainOutput(IMFTransform transform)
+    {
+        while (true)
+        {
+            using var outSample = MediaFactory.MFCreateSample();
+            using var outBuffer = MediaFactory.MFCreateMemoryBuffer(1024 * 1024);
+            outSample.AddBuffer(outBuffer);
+
+            var outputDataBuffer = new OutputDataBuffer
+            {
+                Sample = outSample
+            };
+
+            var res = transform.ProcessOutput(ProcessOutputFlags.None, 1, ref outputDataBuffer, out _);
+            if (res.Failure || outputDataBuffer.Sample == null)
+            {
+                break;
+            }
+
+            // Output recibido con éxito
+            using var s = outputDataBuffer.Sample;
+            using var b = s.ConvertToContiguousBuffer();
+            b.Lock(out _, out _, out int len);
+            b.Unlock();
+            if (len == 0) break;
+            Console.WriteLine($"Drained encoded packet of {len} bytes");
+        }
     }
 }

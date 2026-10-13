@@ -7,10 +7,11 @@ namespace StreamDesk.Receiver.Decoding;
 
 /// <summary>
 /// Decodificador de video H.264 acelerado por hardware mediante Media Foundation Transform (MFT).
-/// Configurado en modo de baja latencia con salida directa a texturas DirectX 11 y desbloqueo asíncrono.
+/// Configurado en modo de baja latencia con salida directa a texturas DirectX 11 y drenado continuo de frames.
 /// </summary>
 public class MfH264HardwareDecoder : IDisposable
 {
+    private const uint MF_E_NOTACCEPTING = 0xC00D36B5;
     private static readonly Guid GuidAsyncUnlock = new("2477308d-c710-4ec7-bb4b-32b0a944ae4b"); // MF_TRANSFORM_ASYNC_UNLOCK
 
     private readonly ID3D11Device _device;
@@ -123,7 +124,19 @@ public class MfH264HardwareDecoder : IDisposable
 
             sample.AddBuffer(buffer);
 
-            _decoder.ProcessInput(0, sample, 0);
+            // Drenar antes de enviar
+            PullDecodedFrame();
+
+            try
+            {
+                _decoder.ProcessInput(0, sample, 0);
+            }
+            catch (SharpGen.Runtime.SharpGenException ex) when ((uint)ex.HResult == MF_E_NOTACCEPTING)
+            {
+                PullDecodedFrame();
+                _decoder.ProcessInput(0, sample, 0);
+            }
+
             PullDecodedFrame();
         }
         catch (Exception ex)
@@ -136,18 +149,23 @@ public class MfH264HardwareDecoder : IDisposable
     {
         if (_decoder == null || _renderTexture == null) return;
 
-        using var outSample = MediaFactory.MFCreateSample();
-        using var outBuffer = MediaFactory.MFCreateMemoryBuffer(_width * _height * 2);
-        outSample.AddBuffer(outBuffer);
-
-        var outputDataBuffer = new OutputDataBuffer
+        while (true)
         {
-            Sample = outSample
-        };
+            using var outSample = MediaFactory.MFCreateSample();
+            using var outBuffer = MediaFactory.MFCreateMemoryBuffer(_width * _height * 2);
+            outSample.AddBuffer(outBuffer);
 
-        var result = _decoder.ProcessOutput(ProcessOutputFlags.None, 1, ref outputDataBuffer, out _);
-        if (result.Success && outputDataBuffer.Sample != null)
-        {
+            var outputDataBuffer = new OutputDataBuffer
+            {
+                Sample = outSample
+            };
+
+            var result = _decoder.ProcessOutput(ProcessOutputFlags.None, 1, ref outputDataBuffer, out _);
+            if (result.Failure || outputDataBuffer.Sample == null)
+            {
+                break;
+            }
+
             OnFrameDecoded?.Invoke(_renderTexture);
         }
     }
