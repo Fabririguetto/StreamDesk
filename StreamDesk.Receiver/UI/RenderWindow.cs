@@ -30,6 +30,7 @@ public class RenderWindow : Form
     private long _frameCount;
     private double _currentFps;
     private double _currentMbps;
+    private long _lastBytesReceived;
     private long _lastMetricsTime = Stopwatch.GetTimestamp();
 
     public RenderWindow(string senderIp, int videoPort = 5004, int controlPort = 5005, int width = 1920, int height = 1080)
@@ -110,7 +111,10 @@ public class RenderWindow : Form
         if (elapsed >= 1.0)
         {
             _currentFps = _frameCount / elapsed;
-            _currentMbps = (_videoReceiver.BytesReceived * 8.0) / (1024 * 1024 * elapsed);
+            long currentTotalBytes = _videoReceiver.BytesReceived;
+            long deltaBytes = currentTotalBytes - _lastBytesReceived;
+            _currentMbps = (deltaBytes * 8.0) / (1024 * 1024 * elapsed);
+            _lastBytesReceived = currentTotalBytes;
             _frameCount = 0;
             _lastMetricsTime = now;
 

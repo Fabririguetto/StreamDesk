@@ -19,6 +19,7 @@ public class MfH264HardwareDecoder : IDisposable
     private readonly ID3D11DeviceContext _context;
     private int _width;
     private int _height;
+    private int _currentStride;
     private byte[] _bgraBuffer;
     private int _outputBufferSize = 4 * 1024 * 1024;
     private long _frameIndex;
@@ -120,6 +121,15 @@ public class MfH264HardwareDecoder : IDisposable
                 }
 
                 _decoder = candidate;
+                try
+                {
+                    var curType = candidate.GetOutputCurrentType(0);
+                    if (curType != null && curType.GetUInt32(MediaTypeAttributeKeys.DefaultStride, out uint dStride).Success && dStride > 0)
+                    {
+                        _currentStride = (int)dStride;
+                    }
+                }
+                catch { }
                 break;
             }
             catch (Exception ex)
@@ -248,7 +258,7 @@ public class MfH264HardwareDecoder : IDisposable
             buffer.Lock(out pData, out _, out int currentLength);
             if (currentLength >= _width * _height)
             {
-                ConvertNv12ToBgra(pData, _bgraBuffer);
+                ConvertNv12ToBgra(pData, currentLength, _bgraBuffer);
                 buffer.Unlock();
 
                 _context.UpdateSubresource(_bgraBuffer, _renderTexture, 0, (uint)(_width * 4));
@@ -277,6 +287,11 @@ public class MfH264HardwareDecoder : IDisposable
             var currentType = _decoder.GetOutputCurrentType(0);
             if (currentType != null)
             {
+                if (currentType.GetUInt32(MediaTypeAttributeKeys.DefaultStride, out uint dStride).Success && dStride > 0)
+                {
+                    _currentStride = (int)dStride;
+                }
+
                 MediaFactory.MFGetAttributeSize(currentType, MediaTypeAttributeKeys.FrameSize, out uint w, out uint h);
                 if (w > 0 && h > 0 && ((int)w != _width || (int)h != _height))
                 {
@@ -318,15 +333,26 @@ public class MfH264HardwareDecoder : IDisposable
         }
     }
 
-    private void ConvertNv12ToBgra(IntPtr pNv12, byte[] bgraDst)
+    private void ConvertNv12ToBgra(IntPtr pNv12, int bufferLength, byte[] bgraDst)
     {
         int width = _width;
         int height = _height;
+        int stride = _currentStride > 0 ? _currentStride : width;
+
+        // En Media Foundation, la altura asignada del búfer NV12 se alinea a macrobloques
+        // de 16 líneas (ej. 1080p se asigna en un búfer de altura 1088).
+        // Calculamos la altura real asignada del plano Y para que pUVBase apunte
+        // exactamente al inicio del plano UV y no a las líneas de relleno negro de Y.
+        int allocatedHeight = height;
+        if (stride > 0 && bufferLength >= stride * height * 3 / 2)
+        {
+            allocatedHeight = (int)((bufferLength * 2L) / (stride * 3L));
+        }
 
         unsafe
         {
             byte* pYBase = (byte*)pNv12;
-            byte* pUVBase = pYBase + (width * height);
+            byte* pUVBase = pYBase + (stride * allocatedHeight);
 
             fixed (byte* pBgraFixed = bgraDst)
             {
@@ -340,8 +366,8 @@ public class MfH264HardwareDecoder : IDisposable
                     byte* pUV = (byte*)uvPtr;
                     byte* pBgra = (byte*)bgraPtr;
 
-                    byte* yRow = pY + (y * width);
-                    byte* uvRow = pUV + ((y / 2) * width);
+                    byte* yRow = pY + (y * stride);
+                    byte* uvRow = pUV + ((y / 2) * stride);
                     byte* bgraRow = pBgra + (y * width * 4);
 
                     for (int x = 0; x < width; x++)
