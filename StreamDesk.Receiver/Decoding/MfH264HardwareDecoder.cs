@@ -7,10 +7,12 @@ namespace StreamDesk.Receiver.Decoding;
 
 /// <summary>
 /// Decodificador de video H.264 acelerado por hardware mediante Media Foundation Transform (MFT).
-/// Configurado en modo de baja latencia con salida directa a texturas DirectX 11.
+/// Configurado en modo de baja latencia con salida directa a texturas DirectX 11 y desbloqueo asíncrono.
 /// </summary>
 public class MfH264HardwareDecoder : IDisposable
 {
+    private static readonly Guid GuidAsyncUnlock = new("2477308d-c710-4ec7-bb4b-32b0a944ae4b"); // MF_TRANSFORM_ASYNC_UNLOCK
+
     private readonly ID3D11Device _device;
     private readonly ID3D11DeviceContext _context;
     private readonly int _width;
@@ -44,35 +46,46 @@ public class MfH264HardwareDecoder : IDisposable
 
         foreach (var act in activates)
         {
+            IMFTransform? candidate = null;
             try
             {
-                _decoder = act.ActivateObject<IMFTransform>();
-                if (_decoder != null) break;
+                candidate = act.ActivateObject<IMFTransform>();
+                if (candidate == null) continue;
+
+                try
+                {
+                    candidate.Attributes?.Set(GuidAsyncUnlock, 1);
+                }
+                catch { }
+
+                // 1. Tipo de entrada: H.264
+                var inputType = MediaFactory.MFCreateMediaType();
+                inputType.Set(MediaTypeAttributeKeys.MajorType, MediaTypeGuids.Video);
+                inputType.Set(MediaTypeAttributeKeys.Subtype, VideoFormatGuids.H264);
+                MediaFactory.MFSetAttributeSize(inputType, MediaTypeAttributeKeys.FrameSize, (uint)_width, (uint)_height);
+                candidate.SetInputType(0, inputType, 0);
+
+                // 2. Tipo de salida: NV12
+                var outputType = MediaFactory.MFCreateMediaType();
+                outputType.Set(MediaTypeAttributeKeys.MajorType, MediaTypeGuids.Video);
+                outputType.Set(MediaTypeAttributeKeys.Subtype, VideoFormatGuids.NV12);
+                MediaFactory.MFSetAttributeSize(outputType, MediaTypeAttributeKeys.FrameSize, (uint)_width, (uint)_height);
+                candidate.SetOutputType(0, outputType, 0);
+
+                _decoder = candidate;
+                break;
             }
-            catch
+            catch (Exception ex)
             {
-                // Probar el siguiente decodificador
+                Console.WriteLine($"[Decoder] Candidato descartado ({ex.Message}). Probando siguiente...");
+                candidate?.Dispose();
             }
         }
 
         if (_decoder == null)
         {
-            throw new InvalidOperationException("No se encontró ningún decodificador H.264 en el sistema.");
+            throw new InvalidOperationException("No se encontró ningún decodificador H.264 compatible en el sistema.");
         }
-
-        // 1. Tipo de entrada: H.264
-        var inputType = MediaFactory.MFCreateMediaType();
-        inputType.Set(MediaTypeAttributeKeys.MajorType, MediaTypeGuids.Video);
-        inputType.Set(MediaTypeAttributeKeys.Subtype, VideoFormatGuids.H264);
-        MediaFactory.MFSetAttributeSize(inputType, MediaTypeAttributeKeys.FrameSize, (uint)_width, (uint)_height);
-        _decoder.SetInputType(0, inputType, 0);
-
-        // 2. Tipo de salida: NV12
-        var outputType = MediaFactory.MFCreateMediaType();
-        outputType.Set(MediaTypeAttributeKeys.MajorType, MediaTypeGuids.Video);
-        outputType.Set(MediaTypeAttributeKeys.Subtype, VideoFormatGuids.NV12);
-        MediaFactory.MFSetAttributeSize(outputType, MediaTypeAttributeKeys.FrameSize, (uint)_width, (uint)_height);
-        _decoder.SetOutputType(0, outputType, 0);
 
         // 3. Crear textura DirectX 11 de renderizado para visualización
         var texDesc = new Texture2DDescription

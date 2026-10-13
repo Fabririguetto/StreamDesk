@@ -7,10 +7,12 @@ namespace StreamDesk.Sender.Encoding;
 
 /// <summary>
 /// Codificador de video H.264 de ultra baja latencia acelerado por hardware mediante Windows Media Foundation (MFT).
-/// Configurado con GOP bajo (1s), cero B-frames, CBR a 25 Mbps y modo Low-Latency activo.
+/// Soporta decodificadores/codificadores asíncronos y síncronos con desbloqueo automático de MF_TRANSFORM_ASYNC_UNLOCK.
 /// </summary>
 public class MfH264HardwareEncoder : IDisposable
 {
+    private static readonly Guid GuidAsyncUnlock = new("2477308d-c710-4ec7-bb4b-32b0a944ae4b"); // MF_TRANSFORM_ASYNC_UNLOCK
+
     private readonly int _width;
     private readonly int _height;
     private readonly int _fps;
@@ -42,21 +44,58 @@ public class MfH264HardwareEncoder : IDisposable
     {
         MediaFactory.MFStartup(true);
 
-        // Buscar el codificador H.264 por hardware
         var h264Type = new RegisterTypeInfo { GuidMajorType = MediaTypeGuids.Video, GuidSubtype = VideoFormatGuids.H264 };
-        uint flags = 0x0000003F; // MFT_ENUM_FLAG_ALL (incluye hardware encoders NVENC, QuickSync, AMF)
+        uint flags = 0x0000003F; // MFT_ENUM_FLAG_ALL (Hardware NVENC, QuickSync, AMF y software)
         using var activates = MediaFactory.MFTEnumEx(TransformCategoryGuids.VideoEncoder, flags, null, h264Type);
 
         foreach (var act in activates)
         {
+            IMFTransform? candidate = null;
             try
             {
-                _encoder = act.ActivateObject<IMFTransform>();
-                if (_encoder != null) break;
+                candidate = act.ActivateObject<IMFTransform>();
+                if (candidate == null) continue;
+
+                // Desbloquear capacidades asíncronas para encoders por hardware (evita error MF_E_TRANSFORM_ASYNC_LOCKED)
+                try
+                {
+                    candidate.Attributes?.Set(GuidAsyncUnlock, 1);
+                }
+                catch
+                {
+                    // Algunos encoders no exponen atributos de desbloqueo
+                }
+
+                // 1. Configurar tipo de medio de salida (H.264)
+                var outputType = MediaFactory.MFCreateMediaType();
+                outputType.Set(MediaTypeAttributeKeys.MajorType, MediaTypeGuids.Video);
+                outputType.Set(MediaTypeAttributeKeys.Subtype, VideoFormatGuids.H264);
+                outputType.Set(MediaTypeAttributeKeys.AvgBitrate, (uint)_bitrate);
+                MediaFactory.MFSetAttributeSize(outputType, MediaTypeAttributeKeys.FrameSize, (uint)_width, (uint)_height);
+                MediaFactory.MFSetAttributeRatio(outputType, MediaTypeAttributeKeys.FrameRate, (uint)_fps, 1);
+                MediaFactory.MFSetAttributeRatio(outputType, MediaTypeAttributeKeys.PixelAspectRatio, 1, 1);
+                outputType.Set(MediaTypeAttributeKeys.InterlaceMode, (int)VideoInterlaceMode.Progressive);
+
+                candidate.SetOutputType(0, outputType, 0);
+
+                // 2. Configurar tipo de medio de entrada (NV12)
+                var inputType = MediaFactory.MFCreateMediaType();
+                inputType.Set(MediaTypeAttributeKeys.MajorType, MediaTypeGuids.Video);
+                inputType.Set(MediaTypeAttributeKeys.Subtype, VideoFormatGuids.NV12);
+                MediaFactory.MFSetAttributeSize(inputType, MediaTypeAttributeKeys.FrameSize, (uint)_width, (uint)_height);
+                MediaFactory.MFSetAttributeRatio(inputType, MediaTypeAttributeKeys.FrameRate, (uint)_fps, 1);
+                MediaFactory.MFSetAttributeRatio(inputType, MediaTypeAttributeKeys.PixelAspectRatio, 1, 1);
+                inputType.Set(MediaTypeAttributeKeys.InterlaceMode, (int)VideoInterlaceMode.Progressive);
+
+                candidate.SetInputType(0, inputType, 0);
+
+                _encoder = candidate;
+                break; // Configuración exitosa
             }
-            catch
+            catch (Exception ex)
             {
-                // Intentar el siguiente si uno falla
+                Console.WriteLine($"[Encoder] Candidato descartado ({ex.Message}). Probando siguiente...");
+                candidate?.Dispose();
             }
         }
 
@@ -64,29 +103,6 @@ public class MfH264HardwareEncoder : IDisposable
         {
             throw new InvalidOperationException("No se encontró ningún codificador H.264 compatible en el sistema.");
         }
-
-        // 1. Configurar tipo de medio de salida (H.264)
-        var outputType = MediaFactory.MFCreateMediaType();
-        outputType.Set(MediaTypeAttributeKeys.MajorType, MediaTypeGuids.Video);
-        outputType.Set(MediaTypeAttributeKeys.Subtype, VideoFormatGuids.H264);
-        outputType.Set(MediaTypeAttributeKeys.AvgBitrate, (uint)_bitrate);
-        MediaFactory.MFSetAttributeSize(outputType, MediaTypeAttributeKeys.FrameSize, (uint)_width, (uint)_height);
-        MediaFactory.MFSetAttributeRatio(outputType, MediaTypeAttributeKeys.FrameRate, (uint)_fps, 1);
-        MediaFactory.MFSetAttributeRatio(outputType, MediaTypeAttributeKeys.PixelAspectRatio, 1, 1);
-        outputType.Set(MediaTypeAttributeKeys.InterlaceMode, (int)VideoInterlaceMode.Progressive);
-
-        _encoder.SetOutputType(0, outputType, 0);
-
-        // 2. Configurar tipo de medio de entrada (NV12)
-        var inputType = MediaFactory.MFCreateMediaType();
-        inputType.Set(MediaTypeAttributeKeys.MajorType, MediaTypeGuids.Video);
-        inputType.Set(MediaTypeAttributeKeys.Subtype, VideoFormatGuids.NV12);
-        MediaFactory.MFSetAttributeSize(inputType, MediaTypeAttributeKeys.FrameSize, (uint)_width, (uint)_height);
-        MediaFactory.MFSetAttributeRatio(inputType, MediaTypeAttributeKeys.FrameRate, (uint)_fps, 1);
-        MediaFactory.MFSetAttributeRatio(inputType, MediaTypeAttributeKeys.PixelAspectRatio, 1, 1);
-        inputType.Set(MediaTypeAttributeKeys.InterlaceMode, (int)VideoInterlaceMode.Progressive);
-
-        _encoder.SetInputType(0, inputType, 0);
 
         // 3. Crear textura staging D3D11 para transferencia eficiente en GPU
         var desc = new Texture2DDescription
