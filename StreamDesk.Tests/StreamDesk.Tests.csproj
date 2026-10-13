@@ -7,6 +7,7 @@
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>
@@ -22,6 +23,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\StreamDesk.Common\StreamDesk.Common.csproj" />
+    <ProjectReference Include="..\StreamDesk.Sender\StreamDesk.Sender.csproj" />
+    <ProjectReference Include="..\StreamDesk.Receiver\StreamDesk.Receiver.csproj" />
   </ItemGroup>
 
 </Project>

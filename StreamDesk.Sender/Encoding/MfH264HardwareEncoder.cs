@@ -14,6 +14,8 @@ public class MfH264HardwareEncoder : IDisposable
     private const uint MF_E_NOTACCEPTING = 0xC00D36B5;
     private static readonly Guid GuidAsyncUnlock = new("2477308d-c710-4ec7-bb4b-32b0a944ae4b"); // MF_TRANSFORM_ASYNC_UNLOCK
     private static readonly Guid GuidAsync = new("a2142eb9-80c9-4f61-a1ca-98d603d7723a");       // MF_TRANSFORM_ASYNC
+    private static readonly Guid GuidMpeg2Profile = new("ad76a21e-fede-404e-8866-03c4f696660f"); // MF_MT_MPEG2_PROFILE
+    private static readonly Guid GuidLowLatency = new("9c27891a-ed7a-40e1-88e8-b22727a024ee");   // CODECAPI_AVLowLatencyMode
 
     private readonly int _width;
     private readonly int _height;
@@ -24,6 +26,7 @@ public class MfH264HardwareEncoder : IDisposable
 
     private IMFTransform? _encoder;
     private ID3D11Texture2D? _stagingTexture;
+    private int _outputBufferSize = 4 * 1024 * 1024;
     private bool _initialized;
     private bool _disposed;
     private long _frameIndex;
@@ -86,11 +89,14 @@ public class MfH264HardwareEncoder : IDisposable
                     try { candidate.Attributes?.Set(GuidAsyncUnlock, 1); } catch { }
                 }
 
-                // 1. Configurar tipo de salida (H.264)
+                try { candidate.Attributes?.Set(GuidLowLatency, 1); } catch { }
+
+                // 1. Configurar tipo de salida (H.264 Baseline Profile para cero B-frames y latencia mínima)
                 var outputType = MediaFactory.MFCreateMediaType();
                 outputType.Set(MediaTypeAttributeKeys.MajorType, MediaTypeGuids.Video);
                 outputType.Set(MediaTypeAttributeKeys.Subtype, VideoFormatGuids.H264);
                 outputType.Set(MediaTypeAttributeKeys.AvgBitrate, (uint)_bitrate);
+                try { outputType.Set(GuidMpeg2Profile, 66u); } catch { } // Baseline profile (sin B-frames)
                 MediaFactory.MFSetAttributeSize(outputType, MediaTypeAttributeKeys.FrameSize, (uint)_width, (uint)_height);
                 MediaFactory.MFSetAttributeRatio(outputType, MediaTypeAttributeKeys.FrameRate, (uint)_fps, 1);
                 MediaFactory.MFSetAttributeRatio(outputType, MediaTypeAttributeKeys.PixelAspectRatio, 1, 1);
@@ -116,6 +122,16 @@ public class MfH264HardwareEncoder : IDisposable
                     candidate.ProcessMessage(TMessageType.MessageNotifyStartOfStream, UIntPtr.Zero);
                 }
                 catch { }
+
+                try
+                {
+                    var streamInfo = candidate.GetOutputStreamInfo(0);
+                    _outputBufferSize = Math.Max(streamInfo.Size, 4 * 1024 * 1024);
+                }
+                catch
+                {
+                    _outputBufferSize = 4 * 1024 * 1024;
+                }
 
                 _encoder = candidate;
                 break;
@@ -264,7 +280,7 @@ public class MfH264HardwareEncoder : IDisposable
         while (true)
         {
             using var outSample = MediaFactory.MFCreateSample();
-            using var outBuffer = MediaFactory.MFCreateMemoryBuffer(1024 * 1024);
+            using var outBuffer = MediaFactory.MFCreateMemoryBuffer(_outputBufferSize);
             outSample.AddBuffer(outBuffer);
 
             var outputDataBuffer = new OutputDataBuffer

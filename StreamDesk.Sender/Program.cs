@@ -94,9 +94,16 @@ public static class Program
             Codec = config.PreferredCodec
         };
 
-        var discoveryTask = Task.Run(() => discoveryService.StartSenderListenerAsync(senderAnnouncement, cts.Token));
+        var discoveryTask = Task.Run(() => discoveryService.StartSenderListenerAsync(
+            senderAnnouncement,
+            cts.Token,
+            receiverEp =>
+            {
+                Console.WriteLine($"\n[Discovery] Receptor detectado en {receiverEp.Address}. Ajustando destino de streaming.");
+                videoSender.SetTarget(receiverEp.Address.ToString(), StreamConfig.DefaultVideoPort);
+            }));
 
-        // Permite también fijar manualmente el destino si se pasa por parámetro CLI (ej. Sender.exe 192.168.1.50)
+        // Permite también fijar manualmente el destino si se pasa por parámetro CLI (ej. Sender.exe 192.168.0.255)
         string? targetIp = args.Length > 0 ? args[0] : null;
         if (!string.IsNullOrEmpty(targetIp))
         {
@@ -105,9 +112,8 @@ public static class Program
         }
         else
         {
-            Console.WriteLine("[Red] Esperando que la PC de escritorio (Receiver) se conecte vía LAN o ingrese la IP...");
-            // Asignar broadcast provisionalmente o loopback
-            videoSender.SetTarget("127.0.0.1", StreamConfig.DefaultVideoPort);
+            Console.WriteLine($"[Red] Destino predeterminado por broadcast LAN: {StreamConfig.DefaultBroadcastSubnet}:{StreamConfig.DefaultVideoPort}");
+            videoSender.SetTarget(StreamConfig.DefaultBroadcastSubnet, StreamConfig.DefaultVideoPort);
         }
 
         // 6. Iniciar Motor de Captura de Pantalla

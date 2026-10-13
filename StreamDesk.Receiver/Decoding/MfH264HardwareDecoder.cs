@@ -19,6 +19,9 @@ public class MfH264HardwareDecoder : IDisposable
     private readonly ID3D11DeviceContext _context;
     private readonly int _width;
     private readonly int _height;
+    private readonly byte[] _bgraBuffer;
+    private int _outputBufferSize = 4 * 1024 * 1024;
+    private long _frameIndex;
 
     private IMFTransform? _decoder;
     private ID3D11Texture2D? _renderTexture;
@@ -34,6 +37,7 @@ public class MfH264HardwareDecoder : IDisposable
         _context = context;
         _width = width;
         _height = height;
+        _bgraBuffer = new byte[width * height * 4];
 
         InitializeDecoder();
     }
@@ -81,6 +85,9 @@ public class MfH264HardwareDecoder : IDisposable
                     try { candidate.Attributes?.Set(GuidAsyncUnlock, 1); } catch { }
                 }
 
+                var guidLowLatency = new Guid("9c27891a-ed7a-40e1-88e8-b22727a024ee");
+                try { candidate.Attributes?.Set(guidLowLatency, 1); } catch { }
+
                 // 1. Tipo de entrada: H.264
                 var inputType = MediaFactory.MFCreateMediaType();
                 inputType.Set(MediaTypeAttributeKeys.MajorType, MediaTypeGuids.Video);
@@ -101,6 +108,16 @@ public class MfH264HardwareDecoder : IDisposable
                     candidate.ProcessMessage(TMessageType.MessageNotifyStartOfStream, UIntPtr.Zero);
                 }
                 catch { }
+
+                try
+                {
+                    var streamInfo = candidate.GetOutputStreamInfo(0);
+                    _outputBufferSize = Math.Max(streamInfo.Size, 4 * 1024 * 1024);
+                }
+                catch
+                {
+                    _outputBufferSize = 4 * 1024 * 1024;
+                }
 
                 _decoder = candidate;
                 break;
@@ -157,6 +174,8 @@ public class MfH264HardwareDecoder : IDisposable
             buffer.CurrentLength = h264Data.Length;
 
             sample.AddBuffer(buffer);
+            sample.SampleTime = (_frameIndex++ * 10_000_000L) / 60;
+            sample.SampleDuration = 10_000_000L / 60;
 
             PullDecodedFrame();
 
@@ -192,7 +211,7 @@ public class MfH264HardwareDecoder : IDisposable
         while (true)
         {
             using var outSample = MediaFactory.MFCreateSample();
-            using var outBuffer = MediaFactory.MFCreateMemoryBuffer(_width * _height * 2);
+            using var outBuffer = MediaFactory.MFCreateMemoryBuffer(_outputBufferSize);
             outSample.AddBuffer(outBuffer);
 
             var outputDataBuffer = new OutputDataBuffer
@@ -201,12 +220,91 @@ public class MfH264HardwareDecoder : IDisposable
             };
 
             var result = _decoder.ProcessOutput(ProcessOutputFlags.None, 1, ref outputDataBuffer, out _);
-            if (result.Failure || outputDataBuffer.Sample == null)
+            if (result.Failure)
             {
+                // MF_E_TRANSFORM_NEED_MORE_INPUT = 0xC00D6D72 (-1072870030)
+                if ((uint)result.Code != 0xC00D6D72)
+                {
+                    Console.WriteLine($"[Decoder ProcessOutput] Code: 0x{(uint)result.Code:X8}");
+                }
+                break;
+            }
+            if (outputDataBuffer.Sample == null)
+            {
+                Console.WriteLine("[Decoder ProcessOutput] Sample is null");
                 break;
             }
 
-            OnFrameDecoded?.Invoke(_renderTexture);
+            using var sample = outputDataBuffer.Sample;
+            using var buffer = sample.ConvertToContiguousBuffer();
+
+            IntPtr pData;
+            buffer.Lock(out pData, out _, out int currentLength);
+            if (currentLength >= _width * _height)
+            {
+                ConvertNv12ToBgra(pData, _bgraBuffer);
+                buffer.Unlock();
+
+                _context.UpdateSubresource(_bgraBuffer, _renderTexture, 0, (uint)(_width * 4));
+
+                OnFrameDecoded?.Invoke(_renderTexture);
+            }
+            else
+            {
+                buffer.Unlock();
+                break;
+            }
+        }
+    }
+
+    private void ConvertNv12ToBgra(IntPtr pNv12, byte[] bgraDst)
+    {
+        int width = _width;
+        int height = _height;
+
+        unsafe
+        {
+            byte* pYBase = (byte*)pNv12;
+            byte* pUVBase = pYBase + (width * height);
+
+            fixed (byte* pBgraFixed = bgraDst)
+            {
+                long yPtr = (long)pYBase;
+                long uvPtr = (long)pUVBase;
+                long bgraPtr = (long)pBgraFixed;
+
+                Parallel.For(0, height, y =>
+                {
+                    byte* pY = (byte*)yPtr;
+                    byte* pUV = (byte*)uvPtr;
+                    byte* pBgra = (byte*)bgraPtr;
+
+                    byte* yRow = pY + (y * width);
+                    byte* uvRow = pUV + ((y / 2) * width);
+                    byte* bgraRow = pBgra + (y * width * 4);
+
+                    for (int x = 0; x < width; x++)
+                    {
+                        int yVal = yRow[x];
+                        int uvIdx = (x & ~1);
+                        int uVal = uvRow[uvIdx] - 128;
+                        int vVal = uvRow[uvIdx + 1] - 128;
+
+                        int c = yVal - 16;
+                        if (c < 0) c = 0;
+
+                        int r = (298 * c + 409 * vVal + 128) >> 8;
+                        int g = (298 * c - 100 * uVal - 208 * vVal + 128) >> 8;
+                        int b = (298 * c + 516 * uVal + 128) >> 8;
+
+                        int dstIdx = x * 4;
+                        bgraRow[dstIdx + 0] = (byte)Math.Clamp(b, 0, 255);
+                        bgraRow[dstIdx + 1] = (byte)Math.Clamp(g, 0, 255);
+                        bgraRow[dstIdx + 2] = (byte)Math.Clamp(r, 0, 255);
+                        bgraRow[dstIdx + 3] = 255;
+                    }
+                });
+            }
         }
     }
 

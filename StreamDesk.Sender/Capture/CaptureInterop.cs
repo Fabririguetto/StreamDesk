@@ -52,9 +52,14 @@ public static class CaptureInterop
             var interop = (IGraphicsCaptureItemInterop)Marshal.GetObjectForIUnknown(factoryPtr);
             Marshal.Release(factoryPtr);
 
-            Guid itemGuid = typeof(GraphicsCaptureItem).GUID;
+            Guid itemGuid = new Guid("79C3F95B-31F7-4EC2-A464-632EF5D30760");
             hr = interop.CreateForMonitor(hMonitor, ref itemGuid, out IntPtr itemPtr);
-            if (hr != 0) Marshal.ThrowExceptionForHR(hr);
+            if (hr != 0)
+            {
+                Guid iunknown = new Guid("00000000-0000-0000-C000-000000000046");
+                hr = interop.CreateForMonitor(hMonitor, ref iunknown, out itemPtr);
+                if (hr != 0) Marshal.ThrowExceptionForHR(hr);
+            }
 
             var item = WinRT.MarshalInterface<GraphicsCaptureItem>.FromAbi(itemPtr);
             Marshal.Release(itemPtr);

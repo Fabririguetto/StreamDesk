@@ -7,6 +7,7 @@ namespace StreamDesk.Sender.Transport;
 
 /// <summary>
 /// Emisor de video de ultra baja latencia sobre UDP utilizando RFC 6184 RTP.
+/// Soporta emisión Unicast y Broadcast (ej. 192.168.0.255).
 /// </summary>
 public class UdpVideoSender : IDisposable
 {
@@ -19,12 +20,14 @@ public class UdpVideoSender : IDisposable
 
     public int PacketsSent { get; private set; }
     public long BytesSent { get; private set; }
+    public string CurrentTarget => _targetEndPoint?.ToString() ?? "Sin destino";
 
     public UdpVideoSender()
     {
         _socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp)
         {
-            SendBufferSize = 4 * 1024 * 1024 // Buffer de envío de 4 MB
+            SendBufferSize = 8 * 1024 * 1024,
+            EnableBroadcast = true // Permitir envío a direcciones broadcast como 192.168.0.255
         };
         _ssrc = (uint)Random.Shared.Next();
     }
@@ -32,18 +35,18 @@ public class UdpVideoSender : IDisposable
     public void SetTarget(string ipAddress, int port)
     {
         _targetEndPoint = new IPEndPoint(IPAddress.Parse(ipAddress), port);
+        Console.WriteLine($"\n[Red] Destino de video actualizado a: {_targetEndPoint}");
     }
 
     /// <summary>
-    /// Envía un frame completo de video (uno o más NALUs) a la PC receptora.
+    /// Envía un frame completo de video (uno o más NALUs) a la red.
     /// </summary>
     public void SendFrame(ReadOnlySpan<byte> h264Bitstream, int maxPayloadSize = 1400)
     {
         if (_targetEndPoint == null || _disposed || h264Bitstream.Length == 0) return;
 
-        _timestamp += 90000 / 60; // Incremento estándar para 60 FPS (90 kHz clock)
+        _timestamp += 90000 / 60;
 
-        // Parsear y fragmentar NALUs en formato Annex-B
         int offset = 0;
         while (offset < h264Bitstream.Length)
         {
@@ -63,9 +66,16 @@ public class UdpVideoSender : IDisposable
 
             foreach (var packet in rtpPackets)
             {
-                _socket.SendTo(packet, _targetEndPoint);
-                PacketsSent++;
-                BytesSent += packet.Length;
+                try
+                {
+                    _socket.SendTo(packet, _targetEndPoint);
+                    PacketsSent++;
+                    BytesSent += packet.Length;
+                }
+                catch (Exception)
+                {
+                    // Si ocurre un error puntual de socket en broadcast, no interrumpir el loop
+                }
             }
 
             offset = naluPayloadStart + naluLength;

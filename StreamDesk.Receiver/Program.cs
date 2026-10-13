@@ -91,7 +91,7 @@ static class Program
             Top = 65,
             Width = 350,
             Height = 28,
-            Text = "192.168.1.100",
+            Text = StreamConfig.DefaultBroadcastSubnet,
             Font = new Font("Segoe UI", 11f)
         };
 

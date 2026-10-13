@@ -17,6 +17,7 @@ public class UdpVideoReceiver : IDisposable
     private bool _disposed;
 
     public event Action<byte[]>? OnFrameAssembled;
+    public event Action<IPEndPoint>? OnSenderDetected;
 
     public int PacketsReceived { get; private set; }
     public long BytesReceived { get; private set; }
@@ -25,7 +26,8 @@ public class UdpVideoReceiver : IDisposable
     {
         _socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp)
         {
-            ReceiveBufferSize = 8 * 1024 * 1024 // Buffer de recepción de 8 MB para soportar ráfagas de I-frame sin descarte
+            ReceiveBufferSize = 8 * 1024 * 1024, // Buffer de recepción de 8 MB
+            EnableBroadcast = true // Permitir recepción de broadcast
         };
         _socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
         _socket.Bind(new IPEndPoint(IPAddress.Any, port));
@@ -54,6 +56,10 @@ public class UdpVideoReceiver : IDisposable
                 int received = _socket.ReceiveFrom(buffer, ref remoteEp);
                 if (received > 0)
                 {
+                    if (PacketsReceived == 0 && remoteEp is IPEndPoint senderEp)
+                    {
+                        OnSenderDetected?.Invoke(senderEp);
+                    }
                     PacketsReceived++;
                     BytesReceived += received;
                     _depacketizer.ProcessPacket(buffer.AsSpan(0, received));

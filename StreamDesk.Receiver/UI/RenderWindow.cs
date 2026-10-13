@@ -42,7 +42,10 @@ public class RenderWindow : Form
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.Opaque, true);
 
         _senderControlEndPoint = new IPEndPoint(IPAddress.Parse(senderIp), controlPort);
-        _controlSocket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+        _controlSocket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp)
+        {
+            EnableBroadcast = true
+        };
 
         // 1. Inicializar Renderizador DirectX 11
         _renderer = new D3D11Renderer(Handle, ClientSize.Width, ClientSize.Height);
@@ -60,6 +63,14 @@ public class RenderWindow : Form
         _videoReceiver.OnFrameAssembled += frame =>
         {
             _decoder.DecodeFrame(frame);
+        };
+        _videoReceiver.OnSenderDetected += senderEp =>
+        {
+            if (_senderControlEndPoint.Address.Equals(IPAddress.Broadcast) || _senderControlEndPoint.Address.ToString().EndsWith(".255"))
+            {
+                _senderControlEndPoint = new IPEndPoint(senderEp.Address, controlPort);
+                Console.WriteLine($"[KVM] Emisor detectado en {senderEp.Address}. Actualizando destino de control.");
+            }
         };
 
         // Eventos de teclado y mouse

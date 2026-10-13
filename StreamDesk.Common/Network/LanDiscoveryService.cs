@@ -29,7 +29,7 @@ public class LanDiscoveryService : IDisposable
     /// <summary>
     /// Modo Sender: Escucha peticiones de descubrimiento y responde con sus parámetros de streaming.
     /// </summary>
-    public async Task StartSenderListenerAsync(DiscoveryResponse senderInfo, CancellationToken ct)
+    public async Task StartSenderListenerAsync(DiscoveryResponse senderInfo, CancellationToken ct, Action<IPEndPoint>? onReceiverDiscovered = null)
     {
         while (!ct.IsCancellationRequested && !_disposed)
         {
@@ -46,6 +46,8 @@ public class LanDiscoveryService : IDisposable
                     byte[] responseBytes = Encoding.UTF8.GetBytes(responseJson);
 
                     await _udpClient.SendAsync(responseBytes, responseBytes.Length, result.RemoteEndPoint);
+
+                    onReceiverDiscovered?.Invoke(result.RemoteEndPoint);
                 }
             }
             catch (OperationCanceledException)

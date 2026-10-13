@@ -8,6 +8,7 @@ public class StreamConfig
     public const int DefaultDiscoveryPort = 45454;
     public const int DefaultVideoPort = 5004;
     public const int DefaultControlPort = 5005;
+    public const string DefaultBroadcastSubnet = "192.168.0.255"; // Subred local LAN predeterminada
 
     public int TargetWidth { get; set; } = 1920;
     public int TargetHeight { get; set; } = 1080;
