@@ -63,10 +63,16 @@ static class Program
 
     private static string? PromptForIpAddress()
     {
+        var localIps = System.Net.Dns.GetHostEntry(System.Net.Dns.GetHostName()).AddressList
+            .Where(ip => ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork && !System.Net.IPAddress.IsLoopback(ip))
+            .Select(ip => ip.ToString())
+            .ToList();
+        string myIpText = localIps.Count > 0 ? string.Join(", ", localIps) : "Desconocida";
+
         using var form = new Form
         {
-            Width = 420,
-            Height = 210,
+            Width = 440,
+            Height = 230,
             FormBorderStyle = FormBorderStyle.FixedDialog,
             Text = "StreamDesk - Conectar a Notebook",
             StartPosition = FormStartPosition.CenterScreen,
@@ -78,18 +84,18 @@ static class Program
         var label = new Label
         {
             Left = 25,
-            Top = 20,
-            Width = 350,
-            Height = 35,
-            Text = "Ingresa la dirección IP de la Notebook emisora en tu red local (Ethernet):",
+            Top = 15,
+            Width = 380,
+            Height = 45,
+            Text = $"IP de esta PC (Receptora): {myIpText}\nIngresa la IP de la Notebook o usa broadcast ({StreamConfig.DefaultBroadcastSubnet}):",
             Font = new Font("Segoe UI", 9.5f)
         };
 
         var textBox = new TextBox
         {
             Left = 25,
-            Top = 65,
-            Width = 350,
+            Top = 70,
+            Width = 370,
             Height = 28,
             Text = StreamConfig.DefaultBroadcastSubnet,
             Font = new Font("Segoe UI", 11f)
@@ -98,9 +104,9 @@ static class Program
         var buttonOk = new Button
         {
             Text = "Conectar",
-            Left = 190,
+            Left = 200,
             Width = 95,
-            Top = 115,
+            Top = 125,
             Height = 32,
             DialogResult = DialogResult.OK,
             BackColor = Color.FromArgb(0, 120, 215),
@@ -111,9 +117,9 @@ static class Program
         var buttonCancel = new Button
         {
             Text = "Cancelar",
-            Left = 295,
-            Width = 80,
-            Top = 115,
+            Left = 305,
+            Width = 90,
+            Top = 125,
             Height = 32,
             DialogResult = DialogResult.Cancel,
             FlatStyle = FlatStyle.Flat

@@ -47,8 +47,9 @@ public class RenderWindow : Form
             EnableBroadcast = true
         };
 
-        // 1. Inicializar Renderizador DirectX 11
-        _renderer = new D3D11Renderer(Handle, ClientSize.Width, ClientSize.Height);
+        // 1. Inicializar Renderizador DirectX 11 (1920x1080 con hardware scaling al HWND)
+        _renderer = new D3D11Renderer(Handle, 1920, 1080);
+        _renderer.RenderFrame(null);
 
         // 2. Inicializar Decodificador Hardware H.264
         _decoder = new MfH264HardwareDecoder(_renderer.Device, _renderer.Context, 1920, 1080);
@@ -102,7 +103,14 @@ public class RenderWindow : Form
 
             if (_showHud)
             {
-                Text = $"StreamDesk Receiver | {_currentFps:F1} FPS | {_currentMbps:F2} Mbps | Packets: {_videoReceiver.PacketsReceived} | KVM: {(_kvmEnabled ? "ACTIVO [F12 para liberar]" : "PAUSADO")}";
+                if (_videoReceiver.PacketsReceived == 0)
+                {
+                    Text = $"StreamDesk Receiver | Esperando señal en puerto {StreamConfig.DefaultVideoPort}... (Paquetes: 0) | Destino KVM: {_senderControlEndPoint.Address}";
+                }
+                else
+                {
+                    Text = $"StreamDesk Receiver | {_currentFps:F1} FPS | {_currentMbps:F2} Mbps | Paquetes: {_videoReceiver.PacketsReceived} | KVM: {(_kvmEnabled ? "ACTIVO [F12 para liberar]" : "PAUSADO")}";
+                }
             }
         }
     }

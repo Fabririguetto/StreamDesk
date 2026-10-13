@@ -16,12 +16,17 @@ public class D3D11Renderer : IDisposable
     private ID3D11RenderTargetView? _renderTargetView;
     private bool _disposed;
 
+    private uint _currentWidth;
+    private uint _currentHeight;
+
     public ID3D11Device Device => _device;
     public ID3D11DeviceContext Context => _context;
 
     public D3D11Renderer(IntPtr hwnd, int width, int height)
     {
         _hwnd = hwnd;
+        _currentWidth = (uint)Math.Max(width, 1);
+        _currentHeight = (uint)Math.Max(height, 1);
 
         var creationFlags = DeviceCreationFlags.BgraSupport;
         D3D11.D3D11CreateDevice(
@@ -38,8 +43,8 @@ public class D3D11Renderer : IDisposable
 
         var swapChainDesc = new SwapChainDescription1
         {
-            Width = (uint)Math.Max(width, 1),
-            Height = (uint)Math.Max(height, 1),
+            Width = _currentWidth,
+            Height = _currentHeight,
             Format = Format.B8G8R8A8_UNorm,
             Stereo = false,
             SampleDescription = new SampleDescription(1, 0),
@@ -63,25 +68,33 @@ public class D3D11Renderer : IDisposable
 
     public void Resize(int width, int height)
     {
-        if (_disposed || width <= 0 || height <= 0) return;
-
-        _renderTargetView?.Dispose();
-        _renderTargetView = null;
-
-        _swapChain.ResizeBuffers(2, (uint)width, (uint)height, Format.B8G8R8A8_UNorm, SwapChainFlags.None);
-        CreateRenderTarget();
+        // Con Scaling.Stretch, DXGI escala el buffer nativo de video automáticamente
+        // al tamaño de la ventana HWND sin alterar la resolución de renderizado ni romper CopyResource.
     }
 
     public void RenderFrame(ID3D11Texture2D? sourceTexture)
     {
-        if (_disposed || _renderTargetView == null) return;
+        if (_disposed) return;
 
         if (sourceTexture != null)
         {
+            var desc = sourceTexture.Description;
+            if (_currentWidth != desc.Width || _currentHeight != desc.Height)
+            {
+                _currentWidth = desc.Width;
+                _currentHeight = desc.Height;
+
+                _renderTargetView?.Dispose();
+                _renderTargetView = null;
+
+                _swapChain.ResizeBuffers(2, _currentWidth, _currentHeight, Format.B8G8R8A8_UNorm, SwapChainFlags.None);
+                CreateRenderTarget();
+            }
+
             using var backBuffer = _swapChain.GetBuffer<ID3D11Texture2D>(0);
             _context.CopyResource(backBuffer, sourceTexture);
         }
-        else
+        else if (_renderTargetView != null)
         {
             // Fondo oscuro mientras espera señal
             _context.ClearRenderTargetView(_renderTargetView, new Vortice.Mathematics.Color4(0.08f, 0.08f, 0.10f, 1.0f));

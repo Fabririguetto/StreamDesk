@@ -13,6 +13,7 @@ public class DxgiDuplicationCaptureEngine : ICaptureEngine
     private readonly ID3D11Device _d3d11Device;
     private readonly ID3D11DeviceContext _d3d11Context;
     private IDXGIOutputDuplication? _duplication;
+    private ID3D11Texture2D? _currentFrameTexture;
     private Thread? _captureThread;
     private volatile bool _isRunning;
     private bool _disposed;
@@ -63,6 +64,9 @@ public class DxgiDuplicationCaptureEngine : ICaptureEngine
 
     private void CaptureLoop()
     {
+        long targetIntervalTicks = Stopwatch.Frequency / 60; // 60 FPS (~16.6ms)
+        long nextTick = Stopwatch.GetTimestamp();
+
         while (_isRunning && !_disposed)
         {
             if (_duplication == null)
@@ -76,15 +80,23 @@ public class DxgiDuplicationCaptureEngine : ICaptureEngine
 
             try
             {
-                var result = duplication.AcquireNextFrame(16, out var frameInfo, out var desktopResource);
+                // Intentar capturar nuevo frame con timeout corto (5 ms)
+                var result = duplication.AcquireNextFrame(5, out var frameInfo, out var desktopResource);
 
                 if (result.Success && desktopResource != null)
                 {
                     using (desktopResource)
                     using (var texture = desktopResource.QueryInterface<ID3D11Texture2D>())
                     {
-                        long timestamp = Stopwatch.GetTimestamp();
-                        OnFrameCaptured?.Invoke(texture, timestamp);
+                        if (_currentFrameTexture == null)
+                        {
+                            var desc = texture.Description;
+                            desc.BindFlags = BindFlags.ShaderResource;
+                            desc.Usage = ResourceUsage.Default;
+                            desc.CPUAccessFlags = CpuAccessFlags.None;
+                            _currentFrameTexture = _d3d11Device.CreateTexture2D(desc);
+                        }
+                        _d3d11Context.CopyResource(_currentFrameTexture, texture);
                     }
                     duplication.ReleaseFrame();
                 }
@@ -92,6 +104,24 @@ public class DxgiDuplicationCaptureEngine : ICaptureEngine
                 {
                     _duplication?.Dispose();
                     _duplication = null;
+                    continue;
+                }
+
+                // Control de cadencia a 60 FPS ininterrumpido
+                long now = Stopwatch.GetTimestamp();
+                if (now >= nextTick)
+                {
+                    nextTick = now + targetIntervalTicks;
+
+                    if (_currentFrameTexture != null)
+                    {
+                        OnFrameCaptured?.Invoke(_currentFrameTexture, now);
+                    }
+                }
+                else
+                {
+                    int sleepMs = (int)((nextTick - now) * 1000 / Stopwatch.Frequency);
+                    if (sleepMs > 1) Thread.Sleep(1);
                 }
             }
             catch (Exception ex)
@@ -112,6 +142,8 @@ public class DxgiDuplicationCaptureEngine : ICaptureEngine
 
         _duplication?.Dispose();
         _duplication = null;
+        _currentFrameTexture?.Dispose();
+        _currentFrameTexture = null;
     }
 
     public void Dispose()

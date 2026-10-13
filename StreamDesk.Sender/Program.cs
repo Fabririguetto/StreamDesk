@@ -103,16 +103,23 @@ public static class Program
                 videoSender.SetTarget(receiverEp.Address.ToString(), StreamConfig.DefaultVideoPort);
             }));
 
-        // Permite también fijar manualmente el destino si se pasa por parámetro CLI (ej. Sender.exe 192.168.0.255)
+        var localIps = Dns.GetHostEntry(Dns.GetHostName()).AddressList
+            .Where(ip => ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork && !IPAddress.IsLoopback(ip))
+            .Select(ip => ip.ToString())
+            .ToList();
+        Console.WriteLine($"[Red] IP(s) local(es) de esta Notebook: {(localIps.Count > 0 ? string.Join(", ", localIps) : "127.0.0.1")}");
+
+        // Permite también fijar manualmente el destino si se pasa por parámetro CLI (ej. Sender.exe 192.168.0.221)
         string? targetIp = args.Length > 0 ? args[0] : null;
         if (!string.IsNullOrEmpty(targetIp))
         {
-            Console.WriteLine($"[Red] IP del Receptor especificada manualmente: {targetIp}");
+            Console.WriteLine($"[Red] IP del Receptor especificada manualmente (Unicast directo): {targetIp}");
             videoSender.SetTarget(targetIp, StreamConfig.DefaultVideoPort);
         }
         else
         {
             Console.WriteLine($"[Red] Destino predeterminado por broadcast LAN: {StreamConfig.DefaultBroadcastSubnet}:{StreamConfig.DefaultVideoPort}");
+            Console.WriteLine($"[Red] Nota: Si el receptor está en otra IP, puedes pasarla directamente: run-sender.bat <IP_RECEPTOR>");
             videoSender.SetTarget(StreamConfig.DefaultBroadcastSubnet, StreamConfig.DefaultVideoPort);
         }
 
