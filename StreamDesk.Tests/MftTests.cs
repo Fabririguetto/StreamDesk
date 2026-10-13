@@ -49,6 +49,9 @@ public class MftTests
 
                 transform.SetInputType(0, inputType, 0);
 
+                transform.ProcessMessage(TMessageType.MessageNotifyBeginStreaming, UIntPtr.Zero);
+                transform.ProcessMessage(TMessageType.MessageNotifyStartOfStream, UIntPtr.Zero);
+
                 workingTransform = transform;
                 break;
             }

@@ -7,12 +7,13 @@ namespace StreamDesk.Sender.Encoding;
 
 /// <summary>
 /// Codificador de video H.264 de ultra baja latencia acelerado por hardware mediante Windows Media Foundation (MFT).
-/// Gestiona buffers asíncronos y drenado continuo de salida para evitar errores MF_E_NOTACCEPTING.
+/// Prioriza codificadores síncronos con compatibilidad directa para pipelines D3D11 y gestiona el ciclo de vida del stream.
 /// </summary>
 public class MfH264HardwareEncoder : IDisposable
 {
     private const uint MF_E_NOTACCEPTING = 0xC00D36B5;
     private static readonly Guid GuidAsyncUnlock = new("2477308d-c710-4ec7-bb4b-32b0a944ae4b"); // MF_TRANSFORM_ASYNC_UNLOCK
+    private static readonly Guid GuidAsync = new("a2142eb9-80c9-4f61-a1ca-98d603d7723a");       // MF_TRANSFORM_ASYNC
 
     private readonly int _width;
     private readonly int _height;
@@ -49,19 +50,41 @@ public class MfH264HardwareEncoder : IDisposable
         uint flags = 0x0000003F; // MFT_ENUM_FLAG_ALL
         using var activates = MediaFactory.MFTEnumEx(TransformCategoryGuids.VideoEncoder, flags, null, h264Type);
 
+        var candidates = new List<(IMFTransform Transform, bool IsAsync)>();
+
         foreach (var act in activates)
         {
-            IMFTransform? candidate = null;
             try
             {
-                candidate = act.ActivateObject<IMFTransform>();
+                var candidate = act.ActivateObject<IMFTransform>();
                 if (candidate == null) continue;
 
+                bool isAsync = false;
                 try
                 {
-                    candidate.Attributes?.Set(GuidAsyncUnlock, 1);
+                    if (candidate.Attributes != null && candidate.Attributes.GetUInt32(GuidAsync, out uint aVal).Success)
+                    {
+                        isAsync = (aVal == 1);
+                    }
                 }
                 catch { }
+
+                candidates.Add((candidate, isAsync));
+            }
+            catch { }
+        }
+
+        // Priorizar codificadores síncronos (directos sin event generator) y luego asíncronos desbloqueados
+        var sortedCandidates = candidates.OrderBy(c => c.IsAsync ? 1 : 0);
+
+        foreach (var (candidate, isAsync) in sortedCandidates)
+        {
+            try
+            {
+                if (isAsync)
+                {
+                    try { candidate.Attributes?.Set(GuidAsyncUnlock, 1); } catch { }
+                }
 
                 // 1. Configurar tipo de salida (H.264)
                 var outputType = MediaFactory.MFCreateMediaType();
@@ -86,13 +109,30 @@ public class MfH264HardwareEncoder : IDisposable
 
                 candidate.SetInputType(0, inputType, 0);
 
+                // 3. Notificar inicio de streaming al codificador
+                try
+                {
+                    candidate.ProcessMessage(TMessageType.MessageNotifyBeginStreaming, UIntPtr.Zero);
+                    candidate.ProcessMessage(TMessageType.MessageNotifyStartOfStream, UIntPtr.Zero);
+                }
+                catch { }
+
                 _encoder = candidate;
                 break;
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"[Encoder] Candidato descartado ({ex.Message}). Probando siguiente...");
-                candidate?.Dispose();
+                candidate.Dispose();
+            }
+        }
+
+        // Limpiar candidatos no utilizados
+        foreach (var (candidate, _) in candidates)
+        {
+            if (candidate != _encoder)
+            {
+                candidate.Dispose();
             }
         }
 
@@ -101,7 +141,7 @@ public class MfH264HardwareEncoder : IDisposable
             throw new InvalidOperationException("No se encontró ningún codificador H.264 compatible en el sistema.");
         }
 
-        // 3. Crear textura staging D3D11
+        // 4. Crear textura staging D3D11
         var desc = new Texture2DDescription
         {
             Width = (uint)_width,
@@ -173,7 +213,6 @@ public class MfH264HardwareEncoder : IDisposable
 
             _context.Unmap(_stagingTexture, 0);
 
-            // Crear IMFSample con el buffer NV12
             using var sample = MediaFactory.MFCreateSample();
             using var mediaBuffer = MediaFactory.MFCreateMemoryBuffer(nv12Size);
 
@@ -188,27 +227,33 @@ public class MfH264HardwareEncoder : IDisposable
             sample.SampleTime = sampleTime;
             sample.SampleDuration = 10_000_000L / _fps;
 
-            // Drenar cualquier salida previa pendiente
+            // Drenar antes de ingresar nuevo frame
             DrainOutput();
 
-            // Enviar sample al codificador
             try
             {
                 _encoder.ProcessInput(0, sample, 0);
             }
             catch (SharpGen.Runtime.SharpGenException ex) when ((uint)ex.HResult == MF_E_NOTACCEPTING)
             {
-                // El buffer del codificador estaba saturado: drenar inmediatamente y reintentar
+                // Drenar y reintentar una vez; si aún no acepta, descartar este frame para no congelar el stream en vivo
                 DrainOutput();
-                _encoder.ProcessInput(0, sample, 0);
+                try
+                {
+                    _encoder.ProcessInput(0, sample, 0);
+                }
+                catch (SharpGen.Runtime.SharpGenException retryEx) when ((uint)retryEx.HResult == MF_E_NOTACCEPTING)
+                {
+                    // Frame descartado con gracia
+                    return;
+                }
             }
 
-            // Drenar los datos codificados generados por este frame
             DrainOutput();
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[H264 Encoder] Error en ciclo de codificación: {ex.Message}");
+            Console.WriteLine($"[H264 Encoder] Error: {ex.Message}");
         }
     }
 
@@ -219,7 +264,7 @@ public class MfH264HardwareEncoder : IDisposable
         while (true)
         {
             using var outSample = MediaFactory.MFCreateSample();
-            using var outBuffer = MediaFactory.MFCreateMemoryBuffer(1024 * 1024); // 1 MB buffer para NALU
+            using var outBuffer = MediaFactory.MFCreateMemoryBuffer(1024 * 1024);
             outSample.AddBuffer(outBuffer);
 
             var outputDataBuffer = new OutputDataBuffer
@@ -230,7 +275,7 @@ public class MfH264HardwareEncoder : IDisposable
             var result = _encoder.ProcessOutput(ProcessOutputFlags.None, 1, ref outputDataBuffer, out _);
             if (result.Failure || outputDataBuffer.Sample == null)
             {
-                break; // No hay más muestras listas (NEED_MORE_INPUT)
+                break;
             }
 
             using var sample = outputDataBuffer.Sample;

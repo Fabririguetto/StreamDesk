@@ -7,12 +7,13 @@ namespace StreamDesk.Receiver.Decoding;
 
 /// <summary>
 /// Decodificador de video H.264 acelerado por hardware mediante Media Foundation Transform (MFT).
-/// Configurado en modo de baja latencia con salida directa a texturas DirectX 11 y drenado continuo de frames.
+/// Configurado en modo de baja latencia con salida directa a texturas DirectX 11, drenado continuo y priorización síncrona.
 /// </summary>
 public class MfH264HardwareDecoder : IDisposable
 {
     private const uint MF_E_NOTACCEPTING = 0xC00D36B5;
     private static readonly Guid GuidAsyncUnlock = new("2477308d-c710-4ec7-bb4b-32b0a944ae4b"); // MF_TRANSFORM_ASYNC_UNLOCK
+    private static readonly Guid GuidAsync = new("a2142eb9-80c9-4f61-a1ca-98d603d7723a");       // MF_TRANSFORM_ASYNC
 
     private readonly ID3D11Device _device;
     private readonly ID3D11DeviceContext _context;
@@ -45,19 +46,40 @@ public class MfH264HardwareDecoder : IDisposable
         uint flags = 0x0000003F; // MFT_ENUM_FLAG_ALL
         using var activates = MediaFactory.MFTEnumEx(TransformCategoryGuids.VideoDecoder, flags, h264Input, null);
 
+        var candidates = new List<(IMFTransform Transform, bool IsAsync)>();
+
         foreach (var act in activates)
         {
-            IMFTransform? candidate = null;
             try
             {
-                candidate = act.ActivateObject<IMFTransform>();
+                var candidate = act.ActivateObject<IMFTransform>();
                 if (candidate == null) continue;
 
+                bool isAsync = false;
                 try
                 {
-                    candidate.Attributes?.Set(GuidAsyncUnlock, 1);
+                    if (candidate.Attributes != null && candidate.Attributes.GetUInt32(GuidAsync, out uint aVal).Success)
+                    {
+                        isAsync = (aVal == 1);
+                    }
                 }
                 catch { }
+
+                candidates.Add((candidate, isAsync));
+            }
+            catch { }
+        }
+
+        var sortedCandidates = candidates.OrderBy(c => c.IsAsync ? 1 : 0);
+
+        foreach (var (candidate, isAsync) in sortedCandidates)
+        {
+            try
+            {
+                if (isAsync)
+                {
+                    try { candidate.Attributes?.Set(GuidAsyncUnlock, 1); } catch { }
+                }
 
                 // 1. Tipo de entrada: H.264
                 var inputType = MediaFactory.MFCreateMediaType();
@@ -73,14 +95,26 @@ public class MfH264HardwareDecoder : IDisposable
                 MediaFactory.MFSetAttributeSize(outputType, MediaTypeAttributeKeys.FrameSize, (uint)_width, (uint)_height);
                 candidate.SetOutputType(0, outputType, 0);
 
+                try
+                {
+                    candidate.ProcessMessage(TMessageType.MessageNotifyBeginStreaming, UIntPtr.Zero);
+                    candidate.ProcessMessage(TMessageType.MessageNotifyStartOfStream, UIntPtr.Zero);
+                }
+                catch { }
+
                 _decoder = candidate;
                 break;
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"[Decoder] Candidato descartado ({ex.Message}). Probando siguiente...");
-                candidate?.Dispose();
+                candidate.Dispose();
             }
+        }
+
+        foreach (var (candidate, _) in candidates)
+        {
+            if (candidate != _decoder) candidate.Dispose();
         }
 
         if (_decoder == null)
@@ -124,7 +158,6 @@ public class MfH264HardwareDecoder : IDisposable
 
             sample.AddBuffer(buffer);
 
-            // Drenar antes de enviar
             PullDecodedFrame();
 
             try
@@ -134,7 +167,14 @@ public class MfH264HardwareDecoder : IDisposable
             catch (SharpGen.Runtime.SharpGenException ex) when ((uint)ex.HResult == MF_E_NOTACCEPTING)
             {
                 PullDecodedFrame();
-                _decoder.ProcessInput(0, sample, 0);
+                try
+                {
+                    _decoder.ProcessInput(0, sample, 0);
+                }
+                catch (SharpGen.Runtime.SharpGenException retryEx) when ((uint)retryEx.HResult == MF_E_NOTACCEPTING)
+                {
+                    return;
+                }
             }
 
             PullDecodedFrame();
