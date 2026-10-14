@@ -42,11 +42,17 @@ public static class Program
         using var simulator = new Win32InputSimulator(controlPort);
         Console.WriteLine($"[KVM] Servidor de entrada remoto escuchando en puerto UDP {controlPort}...");
 
+        string? lastControllerIp = null;
         simulator.OnControllerConnected += ep =>
         {
-            Console.ForegroundColor = ConsoleColor.Green;
-            Console.WriteLine($"\n[KVM] Controlador conectado desde {ep.Address}. ¡Control remoto activo!");
-            Console.ResetColor();
+            string ip = ep.Address.ToString();
+            if (lastControllerIp != ip)
+            {
+                lastControllerIp = ip;
+                Console.ForegroundColor = ConsoleColor.Green;
+                Console.WriteLine($"\n[{DateTime.Now:HH:mm:ss}] [KVM] PC de control conectada ({ip}). ¡Control remoto activo!");
+                Console.ResetColor();
+            }
         };
 
         // 2. Iniciar descubrimiento automático en LAN (UDP Broadcast)
@@ -58,12 +64,18 @@ public static class Program
             VideoPort = 0 // El video va por cable HDMI
         };
 
+        string? lastDiscoveredIp = null;
         _ = Task.Run(() => discovery.StartSenderListenerAsync(
             announcement,
             cts.Token,
             receiverEp =>
             {
-                Console.WriteLine($"[Discovery] PC de escritorio detectada en {receiverEp.Address}.");
+                string ip = receiverEp.Address.ToString();
+                if (lastDiscoveredIp != ip)
+                {
+                    lastDiscoveredIp = ip;
+                    Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [Discovery] PC de escritorio detectada en {ip}.");
+                }
             }));
 
         Console.ForegroundColor = ConsoleColor.Yellow;

@@ -59,9 +59,21 @@ public static class VideoCaptureDeviceEnumerator
 
     private static void PopulateFormats(VideoCaptureDeviceInfo devInfo)
     {
+        IMFMediaSource? mediaSource = null;
         try
         {
-            var mediaSource = devInfo.Activate.ActivateObject<IMFMediaSource>();
+            if (!string.IsNullOrEmpty(devInfo.SymbolicLink))
+            {
+                using var devAttrs = MediaFactory.MFCreateAttributes(2);
+                devAttrs.Set(CaptureDeviceAttributeKeys.SourceType, CaptureDeviceAttributeKeys.SourceTypeVidcap);
+                devAttrs.Set(CaptureDeviceAttributeKeys.SourceTypeVidcapSymbolicLink, devInfo.SymbolicLink);
+                mediaSource = MediaFactory.MFCreateDeviceSource(devAttrs);
+            }
+            else if (devInfo.Activate != null)
+            {
+                mediaSource = devInfo.Activate.ActivateObject<IMFMediaSource>();
+            }
+
             if (mediaSource == null) return;
 
             using (mediaSource)

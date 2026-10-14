@@ -91,6 +91,8 @@ public class Win32InputSimulator : IDisposable
         _listenerThread.Start();
     }
 
+    private IPEndPoint? _lastControllerEp;
+
     private void ListenLoop()
     {
         IPEndPoint remoteEp = new IPEndPoint(IPAddress.Any, 0);
@@ -103,8 +105,13 @@ public class Win32InputSimulator : IDisposable
                 if (data.Length >= Marshal.SizeOf<ControlPacket>())
                 {
                     var packet = ControlPacket.Deserialize(data);
-                    OnControllerConnected?.Invoke(remoteEp);
-                    OnPacketReceived?.Invoke(packet.PacketType);
+
+                    if (_lastControllerEp == null || !_lastControllerEp.Address.Equals(remoteEp.Address))
+                    {
+                        _lastControllerEp = new IPEndPoint(remoteEp.Address, remoteEp.Port);
+                        OnControllerConnected?.Invoke(_lastControllerEp);
+                    }
+
                     ProcessControlPacket(packet);
                 }
             }

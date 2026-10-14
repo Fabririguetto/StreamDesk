@@ -12,7 +12,7 @@ public class VideoCaptureDeviceInfo
     public int Index { get; set; }
     public string Name { get; set; } = string.Empty;
     public string SymbolicLink { get; set; } = string.Empty;
-    public IMFActivate Activate { get; set; } = null!;
+    public IMFActivate? Activate { get; set; }
     public List<VideoFormatInfo> SupportedFormats { get; set; } = new();
 
     public override string ToString() => Name;
