@@ -186,55 +186,82 @@ public class MfH264HardwareEncoder : IDisposable
             var mapped = _context.Map(_stagingTexture, 0, MapMode.Read, Vortice.Direct3D11.MapFlags.None);
             if (mapped.DataPointer == IntPtr.Zero) return;
 
-            int nv12Size = _width * _height * 3 / 2;
-            byte[] nv12Buffer = new byte[nv12Size];
-
-            unsafe
-            {
-                byte* pSrc = (byte*)mapped.DataPointer;
-                int srcPitch = (int)mapped.RowPitch;
-
-                fixed (byte* pDst = nv12Buffer)
-                {
-                    byte* pY = pDst;
-                    byte* pUV = pDst + (_width * _height);
-
-                    for (int y = 0; y < _height; y++)
-                    {
-                        byte* srcRow = pSrc + (y * srcPitch);
-                        byte* dstYRow = pY + (y * _width);
-
-                        for (int x = 0; x < _width; x++)
-                        {
-                            byte b = srcRow[x * 4 + 0];
-                            byte g = srcRow[x * 4 + 1];
-                            byte r = srcRow[x * 4 + 2];
-
-                            int yVal = ((66 * r + 129 * g + 25 * b + 128) >> 8) + 16;
-                            dstYRow[x] = (byte)Math.Clamp(yVal, 0, 255);
-
-                            if ((y % 2 == 0) && (x % 2 == 0))
-                            {
-                                int uVal = ((-38 * r - 74 * g + 112 * b + 128) >> 8) + 128;
-                                int vVal = ((112 * r - 94 * g - 18 * b + 128) >> 8) + 128;
-
-                                int uvIndex = (y / 2) * _width + x;
-                                pUV[uvIndex + 0] = (byte)Math.Clamp(uVal, 0, 255);
-                                pUV[uvIndex + 1] = (byte)Math.Clamp(vVal, 0, 255);
-                            }
-                        }
-                    }
-                }
-            }
-
-            _context.Unmap(_stagingTexture, 0);
+            int width = _width;
+            int height = _height;
+            int halfHeight = height / 2;
+            int nv12Size = width * height * 3 / 2;
 
             using var sample = MediaFactory.MFCreateSample();
             using var mediaBuffer = MediaFactory.MFCreateMemoryBuffer(nv12Size);
 
             IntPtr pBuffer;
             mediaBuffer.Lock(out pBuffer, out _, out _);
-            Marshal.Copy(nv12Buffer, 0, pBuffer, nv12Size);
+
+            unsafe
+            {
+                byte* pSrc = (byte*)mapped.DataPointer;
+                int srcPitch = (int)mapped.RowPitch;
+                byte* pDst = (byte*)pBuffer;
+                byte* pY = pDst;
+                byte* pUV = pDst + (width * height);
+
+                Parallel.For(0, halfHeight, yHalf =>
+                {
+                    int y0 = yHalf * 2;
+                    int y1 = y0 + 1;
+
+                    byte* srcRow0 = pSrc + (y0 * srcPitch);
+                    byte* srcRow1 = pSrc + (y1 * srcPitch);
+
+                    byte* dstYRow0 = pY + (y0 * width);
+                    byte* dstYRow1 = pY + (y1 * width);
+                    byte* dstUVRow = pUV + (yHalf * width);
+
+                    for (int x = 0; x < width; x += 2)
+                    {
+                        // Pixel (x, y0)
+                        byte b00 = srcRow0[x * 4 + 0];
+                        byte g00 = srcRow0[x * 4 + 1];
+                        byte r00 = srcRow0[x * 4 + 2];
+                        int y00 = ((66 * r00 + 129 * g00 + 25 * b00 + 128) >> 8) + 16;
+                        dstYRow0[x] = (byte)(y00 < 0 ? 0 : (y00 > 255 ? 255 : y00));
+
+                        // Pixel (x+1, y0)
+                        byte b10 = srcRow0[(x + 1) * 4 + 0];
+                        byte g10 = srcRow0[(x + 1) * 4 + 1];
+                        byte r10 = srcRow0[(x + 1) * 4 + 2];
+                        int y10 = ((66 * r10 + 129 * g10 + 25 * b10 + 128) >> 8) + 16;
+                        dstYRow0[x + 1] = (byte)(y10 < 0 ? 0 : (y10 > 255 ? 255 : y10));
+
+                        // Pixel (x, y1)
+                        byte b01 = srcRow1[x * 4 + 0];
+                        byte g01 = srcRow1[x * 4 + 1];
+                        byte r01 = srcRow1[x * 4 + 2];
+                        int y01 = ((66 * r01 + 129 * g01 + 25 * b01 + 128) >> 8) + 16;
+                        dstYRow1[x] = (byte)(y01 < 0 ? 0 : (y01 > 255 ? 255 : y01));
+
+                        // Pixel (x+1, y1)
+                        byte b11 = srcRow1[(x + 1) * 4 + 0];
+                        byte g11 = srcRow1[(x + 1) * 4 + 1];
+                        byte r11 = srcRow1[(x + 1) * 4 + 2];
+                        int y11 = ((66 * r11 + 129 * g11 + 25 * b11 + 128) >> 8) + 16;
+                        dstYRow1[x + 1] = (byte)(y11 < 0 ? 0 : (y11 > 255 ? 255 : y11));
+
+                        // Submuestreo 2x2 chroma con promedio anti-aliasing
+                        int avgR = (r00 + r10 + r01 + r11 + 2) >> 2;
+                        int avgG = (g00 + g10 + g01 + g11 + 2) >> 2;
+                        int avgB = (b00 + b10 + b01 + b11 + 2) >> 2;
+
+                        int uVal = ((-38 * avgR - 74 * avgG + 112 * avgB + 128) >> 8) + 128;
+                        int vVal = ((112 * avgR - 94 * avgG - 18 * avgB + 128) >> 8) + 128;
+
+                        dstUVRow[x + 0] = (byte)(uVal < 0 ? 0 : (uVal > 255 ? 255 : uVal));
+                        dstUVRow[x + 1] = (byte)(vVal < 0 ? 0 : (vVal > 255 ? 255 : vVal));
+                    }
+                });
+            }
+
+            _context.Unmap(_stagingTexture, 0);
             mediaBuffer.Unlock();
             mediaBuffer.CurrentLength = nv12Size;
 

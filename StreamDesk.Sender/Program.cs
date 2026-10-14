@@ -66,27 +66,58 @@ public static class Program
         if (screenWidth <= 0) screenWidth = 1920;
         if (screenHeight <= 0) screenHeight = 1080;
 
-        bool forceNative = args.Any(a => a.Equals("--native", StringComparison.OrdinalIgnoreCase) || a.Equals("--4k", StringComparison.OrdinalIgnoreCase));
+        // Por defecto: resolución dinámica y nativa del monitor (1:1 pixel perfect, soporta 4K, 2K, 1080p, etc.)
         int targetWidth = screenWidth;
         int targetHeight = screenHeight;
 
-        if (!forceNative && screenWidth > 1920)
+        bool force1080p = args.Any(a => a.Equals("--1080p", StringComparison.OrdinalIgnoreCase) || a.Equals("--scale-1080p", StringComparison.OrdinalIgnoreCase));
+        if (force1080p && screenWidth > 1920)
         {
             double aspect = (double)screenWidth / screenHeight;
             targetWidth = 1920;
             targetHeight = (int)Math.Round(1920.0 / aspect);
-            if ((targetWidth % 2) != 0) targetWidth--;
-            if ((targetHeight % 2) != 0) targetHeight--;
-            Console.WriteLine($"[Optimizador] Pantalla 4K detectada ({screenWidth}x{screenHeight}). Escalando a {targetWidth}x{targetHeight} @ 60 FPS para máxima fluidez (<20ms).");
-            Console.WriteLine("[Optimizador] (Usa --4k o --native si deseas emitir en resolución 4K nativa)");
+            Console.WriteLine($"[Resolución] Escala reducida a 1080p: {targetWidth}x{targetHeight}");
         }
+        else
+        {
+            Console.WriteLine($"[Resolución] Dinámica / Nativa de pantalla: {targetWidth}x{targetHeight} (1:1 pixel perfect)");
+        }
+
+        // Asegurar dimensiones pares para codificación H.264
+        if ((targetWidth % 2) != 0) targetWidth--;
+        if ((targetHeight % 2) != 0) targetHeight--;
+
+        // Soporte de FPS configurables (--fps 60, --fps 75, --fps 90, --fps 120, etc.)
+        int targetFps = 60;
+        for (int i = 0; i < args.Length; i++)
+        {
+            if ((args[i].Equals("--fps", StringComparison.OrdinalIgnoreCase) || args[i].Equals("-fps", StringComparison.OrdinalIgnoreCase)) && i + 1 < args.Length && int.TryParse(args[i + 1], out int parsedFps))
+            {
+                targetFps = Math.Clamp(parsedFps, 30, 240);
+                break;
+            }
+        }
+
+        // Bitrate óptimo según la resolución de pantalla
+        int? userBitrateMbps = null;
+        for (int i = 0; i < args.Length; i++)
+        {
+            if ((args[i].Equals("--bitrate", StringComparison.OrdinalIgnoreCase) || args[i].Equals("-bitrate", StringComparison.OrdinalIgnoreCase)) && i + 1 < args.Length && int.TryParse(args[i + 1], out int parsedBitrate))
+            {
+                userBitrateMbps = Math.Clamp(parsedBitrate, 5, 120);
+                break;
+            }
+        }
+
+        int defaultBitrateKbps = targetWidth >= 3840 ? 45000 : (targetWidth >= 2560 ? 35000 : 25000);
+        int bitrateKbps = userBitrateMbps.HasValue ? userBitrateMbps.Value * 1000 : defaultBitrateKbps;
 
         var config = new StreamConfig
         {
             TargetWidth = targetWidth,
             TargetHeight = targetHeight,
-            TargetFps = 60,
-            BitrateKbps = 25000 // 25 Mbps para LAN Ethernet
+            TargetFps = targetFps,
+            BitrateKbps = bitrateKbps
         };
 
         Console.WriteLine($"[Config] Resolución de streaming: {config.TargetWidth}x{config.TargetHeight} @ {config.TargetFps} FPS");
@@ -174,12 +205,12 @@ public static class Program
 
         try
         {
-            Console.WriteLine("[Captura] Iniciando Windows.Graphics.Capture (VRAM Zero-Copy)...");
+            Console.WriteLine($"[Captura] Iniciando Windows.Graphics.Capture (VRAM Zero-Copy) a {config.TargetFps} FPS...");
             var wgc = new WindowsGraphicsCaptureEngine(d3d11Device, d3d11Context, winRtDevice);
-            wgc.Start(hMonitor, config.TargetWidth, config.TargetHeight);
+            wgc.Start(hMonitor, config.TargetWidth, config.TargetHeight, config.TargetFps);
             captureEngine = wgc;
             Console.ForegroundColor = ConsoleColor.Green;
-            Console.WriteLine("[Captura] Windows.Graphics.Capture activo a 60 FPS.");
+            Console.WriteLine($"[Captura] Windows.Graphics.Capture activo a {config.TargetFps} FPS.");
             Console.ResetColor();
         }
         catch (Exception ex)
@@ -188,7 +219,7 @@ public static class Program
             Console.WriteLine($"[Captura] Fallback a DXGI Desktop Duplication: {ex.Message}");
             Console.ResetColor();
             var dxgi = new DxgiDuplicationCaptureEngine(d3d11Device, d3d11Context);
-            dxgi.Start(hMonitor, config.TargetWidth, config.TargetHeight);
+            dxgi.Start(hMonitor, config.TargetWidth, config.TargetHeight, config.TargetFps);
             captureEngine = dxgi;
         }
 

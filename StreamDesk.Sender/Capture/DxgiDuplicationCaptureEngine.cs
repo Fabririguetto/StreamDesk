@@ -27,16 +27,27 @@ public class DxgiDuplicationCaptureEngine : ICaptureEngine
         _d3d11Context = context;
     }
 
-    public void Start(IntPtr hMonitor, int width, int height)
+    [System.Runtime.InteropServices.DllImport("winmm.dll", EntryPoint = "timeBeginPeriod")]
+    private static extern uint timeBeginPeriod(uint uMilliseconds);
+
+    [System.Runtime.InteropServices.DllImport("winmm.dll", EntryPoint = "timeEndPeriod")]
+    private static extern uint timeEndPeriod(uint uMilliseconds);
+
+    private int _targetFps = 60;
+
+    public void Start(IntPtr hMonitor, int width, int height, int fps = 60)
     {
         if (_isRunning) return;
+
+        _targetFps = fps > 0 ? fps : 60;
+        try { timeBeginPeriod(1); } catch { }
 
         InitializeDuplication();
 
         _isRunning = true;
         _captureThread = new Thread(CaptureLoop)
         {
-            Name = "DXGI Desktop Capture Thread",
+            Name = $"DXGI Desktop {_targetFps} FPS Capture Thread",
             IsBackground = true,
             Priority = ThreadPriority.AboveNormal
         };
@@ -64,7 +75,7 @@ public class DxgiDuplicationCaptureEngine : ICaptureEngine
 
     private void CaptureLoop()
     {
-        long targetIntervalTicks = Stopwatch.Frequency / 60; // 60 FPS (~16.6ms)
+        long targetIntervalTicks = Stopwatch.Frequency / _targetFps;
         long nextTick = Stopwatch.GetTimestamp();
 
         while (_isRunning && !_disposed)
@@ -107,11 +118,18 @@ public class DxgiDuplicationCaptureEngine : ICaptureEngine
                     continue;
                 }
 
-                // Control de cadencia a 60 FPS ininterrumpido
+                // Control de cadencia ininterrumpido sin deriva temporal
                 long now = Stopwatch.GetTimestamp();
                 if (now >= nextTick)
                 {
-                    nextTick = now + targetIntervalTicks;
+                    if (now - nextTick > targetIntervalTicks * 2)
+                    {
+                        nextTick = now + targetIntervalTicks;
+                    }
+                    else
+                    {
+                        nextTick += targetIntervalTicks;
+                    }
 
                     if (_currentFrameTexture != null)
                     {
@@ -120,8 +138,15 @@ public class DxgiDuplicationCaptureEngine : ICaptureEngine
                 }
                 else
                 {
-                    int sleepMs = (int)((nextTick - now) * 1000 / Stopwatch.Frequency);
-                    if (sleepMs > 1) Thread.Sleep(1);
+                    int remainingMs = (int)((nextTick - now) * 1000 / Stopwatch.Frequency);
+                    if (remainingMs > 2)
+                    {
+                        Thread.Sleep(remainingMs - 1);
+                    }
+                    else
+                    {
+                        Thread.SpinWait(20);
+                    }
                 }
             }
             catch (Exception ex)
@@ -137,6 +162,9 @@ public class DxgiDuplicationCaptureEngine : ICaptureEngine
     {
         if (!_isRunning) return;
         _isRunning = false;
+
+        try { timeEndPeriod(1); } catch { }
+
         _captureThread?.Join(500);
         _captureThread = null;
 

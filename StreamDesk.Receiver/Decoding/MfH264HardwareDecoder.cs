@@ -370,25 +370,42 @@ public class MfH264HardwareDecoder : IDisposable
                     byte* uvRow = pUV + ((y / 2) * stride);
                     byte* bgraRow = pBgra + (y * width * 4);
 
-                    for (int x = 0; x < width; x++)
+                    for (int x = 0; x < width; x += 2)
                     {
-                        int yVal = yRow[x];
-                        int uvIdx = (x & ~1);
-                        int uVal = uvRow[uvIdx] - 128;
-                        int vVal = uvRow[uvIdx + 1] - 128;
+                        int uVal = uvRow[x] - 128;
+                        int vVal = uvRow[x + 1] - 128;
 
-                        int c = yVal - 16;
-                        if (c < 0) c = 0;
+                        int rChroma = 409 * vVal + 128;
+                        int gChroma = -100 * uVal - 208 * vVal + 128;
+                        int bChroma = 516 * uVal + 128;
 
-                        int r = (298 * c + 409 * vVal + 128) >> 8;
-                        int g = (298 * c - 100 * uVal - 208 * vVal + 128) >> 8;
-                        int b = (298 * c + 516 * uVal + 128) >> 8;
+                        // Pixel 0
+                        int y0 = yRow[x] - 16;
+                        if (y0 < 0) y0 = 0;
+                        int c0 = 298 * y0;
+                        int r0 = (c0 + rChroma) >> 8;
+                        int g0 = (c0 + gChroma) >> 8;
+                        int b0 = (c0 + bChroma) >> 8;
 
-                        int dstIdx = x * 4;
-                        bgraRow[dstIdx + 0] = (byte)Math.Clamp(b, 0, 255);
-                        bgraRow[dstIdx + 1] = (byte)Math.Clamp(g, 0, 255);
-                        bgraRow[dstIdx + 2] = (byte)Math.Clamp(r, 0, 255);
-                        bgraRow[dstIdx + 3] = 255;
+                        int dst0 = x * 4;
+                        bgraRow[dst0 + 0] = (byte)(b0 < 0 ? 0 : (b0 > 255 ? 255 : b0));
+                        bgraRow[dst0 + 1] = (byte)(g0 < 0 ? 0 : (g0 > 255 ? 255 : g0));
+                        bgraRow[dst0 + 2] = (byte)(r0 < 0 ? 0 : (r0 > 255 ? 255 : r0));
+                        bgraRow[dst0 + 3] = 255;
+
+                        // Pixel 1
+                        int y1 = yRow[x + 1] - 16;
+                        if (y1 < 0) y1 = 0;
+                        int c1 = 298 * y1;
+                        int r1 = (c1 + rChroma) >> 8;
+                        int g1 = (c1 + gChroma) >> 8;
+                        int b1 = (c1 + bChroma) >> 8;
+
+                        int dst1 = (x + 1) * 4;
+                        bgraRow[dst1 + 0] = (byte)(b1 < 0 ? 0 : (b1 > 255 ? 255 : b1));
+                        bgraRow[dst1 + 1] = (byte)(g1 < 0 ? 0 : (g1 > 255 ? 255 : g1));
+                        bgraRow[dst1 + 2] = (byte)(r1 < 0 ? 0 : (r1 > 255 ? 255 : r1));
+                        bgraRow[dst1 + 3] = 255;
                     }
                 });
             }

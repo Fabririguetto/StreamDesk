@@ -22,6 +22,13 @@ public class WindowsGraphicsCaptureEngine : ICaptureEngine
     private GraphicsCaptureItem? _captureItem;
     private ID3D11Texture2D? _currentFrameTexture;
     private Thread? _emitThread;
+    [System.Runtime.InteropServices.DllImport("winmm.dll", EntryPoint = "timeBeginPeriod")]
+    private static extern uint timeBeginPeriod(uint uMilliseconds);
+
+    [System.Runtime.InteropServices.DllImport("winmm.dll", EntryPoint = "timeEndPeriod")]
+    private static extern uint timeEndPeriod(uint uMilliseconds);
+
+    private int _targetFps = 60;
     private volatile bool _isRunning;
     private bool _disposed;
 
@@ -35,9 +42,12 @@ public class WindowsGraphicsCaptureEngine : ICaptureEngine
         _winRtDevice = winRtDevice;
     }
 
-    public void Start(IntPtr hMonitor, int width, int height)
+    public void Start(IntPtr hMonitor, int width, int height, int fps = 60)
     {
         if (_isRunning) return;
+
+        _targetFps = fps > 0 ? fps : 60;
+        try { timeBeginPeriod(1); } catch { }
 
         _captureItem = CaptureInterop.CreateItemForMonitor(hMonitor);
 
@@ -56,7 +66,7 @@ public class WindowsGraphicsCaptureEngine : ICaptureEngine
         _isRunning = true;
         _emitThread = new Thread(EmitLoop)
         {
-            Name = "WGC 60 FPS Emit Thread",
+            Name = $"WGC {_targetFps} FPS Emit Thread",
             IsBackground = true,
             Priority = ThreadPriority.AboveNormal
         };
@@ -100,7 +110,7 @@ public class WindowsGraphicsCaptureEngine : ICaptureEngine
 
     private void EmitLoop()
     {
-        long targetIntervalTicks = Stopwatch.Frequency / 60;
+        long targetIntervalTicks = Stopwatch.Frequency / _targetFps;
         long nextTick = Stopwatch.GetTimestamp();
 
         while (_isRunning && !_disposed)
@@ -110,7 +120,15 @@ public class WindowsGraphicsCaptureEngine : ICaptureEngine
                 long now = Stopwatch.GetTimestamp();
                 if (now >= nextTick)
                 {
-                    nextTick = now + targetIntervalTicks;
+                    // Evitar atraso acumulado si hubo pausas momentáneas
+                    if (now - nextTick > targetIntervalTicks * 2)
+                    {
+                        nextTick = now + targetIntervalTicks;
+                    }
+                    else
+                    {
+                        nextTick += targetIntervalTicks;
+                    }
 
                     ID3D11Texture2D? textureToEmit = null;
                     lock (_syncLock)
@@ -125,8 +143,15 @@ public class WindowsGraphicsCaptureEngine : ICaptureEngine
                 }
                 else
                 {
-                    int sleepMs = (int)((nextTick - now) * 1000 / Stopwatch.Frequency);
-                    if (sleepMs > 1) Thread.Sleep(1);
+                    int remainingMs = (int)((nextTick - now) * 1000 / Stopwatch.Frequency);
+                    if (remainingMs > 2)
+                    {
+                        Thread.Sleep(remainingMs - 1);
+                    }
+                    else
+                    {
+                        Thread.SpinWait(20);
+                    }
                 }
             }
             catch (Exception ex)
@@ -140,6 +165,8 @@ public class WindowsGraphicsCaptureEngine : ICaptureEngine
     {
         if (!_isRunning) return;
         _isRunning = false;
+
+        try { timeEndPeriod(1); } catch { }
 
         _emitThread?.Join(500);
         _emitThread = null;
