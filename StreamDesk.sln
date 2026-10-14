@@ -11,6 +11,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "StreamDesk.Receiver", "Stre
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "StreamDesk.Tests", "StreamDesk.Tests\StreamDesk.Tests.csproj", "{927DC1F7-DD40-4590-81F4-D00A3037C812}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "StreamDesk.Agent", "StreamDesk.Agent\StreamDesk.Agent.csproj", "{953C704A-681D-4846-BE5E-8D462A309152}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "StreamDesk.Monitor", "StreamDesk.Monitor\StreamDesk.Monitor.csproj", "{52AC42F0-24E5-49DB-96B8-818438AADED5}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -36,5 +40,13 @@ Global
 		{927DC1F7-DD40-4590-81F4-D00A3037C812}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{927DC1F7-DD40-4590-81F4-D00A3037C812}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{927DC1F7-DD40-4590-81F4-D00A3037C812}.Release|Any CPU.Build.0 = Release|Any CPU
+		{953C704A-681D-4846-BE5E-8D462A309152}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{953C704A-681D-4846-BE5E-8D462A309152}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{953C704A-681D-4846-BE5E-8D462A309152}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{953C704A-681D-4846-BE5E-8D462A309152}.Release|Any CPU.Build.0 = Release|Any CPU
+		{52AC42F0-24E5-49DB-96B8-818438AADED5}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{52AC42F0-24E5-49DB-96B8-818438AADED5}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{52AC42F0-24E5-49DB-96B8-818438AADED5}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{52AC42F0-24E5-49DB-96B8-818438AADED5}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

@@ -1,0 +1,81 @@
+using System.Net;
+using System.Net.Sockets;
+using StreamDesk.Common.Input;
+using StreamDesk.Common.Models;
+using StreamDesk.Common.Network;
+
+namespace StreamDesk.Agent;
+
+public static class Program
+{
+    public static async Task Main(string[] args)
+    {
+        Console.Title = "StreamDesk Agent - Receptor de Teclado y Mouse (0% CPU)";
+        Console.ForegroundColor = ConsoleColor.Cyan;
+        Console.WriteLine("==================================================================");
+        Console.WriteLine("    StreamDesk Agent - KVM Ultraligero para Notebook / Emisor");
+        Console.WriteLine("==================================================================");
+        Console.ResetColor();
+
+        Console.WriteLine("[Rendimiento] Modo de consumo cero activo (0.0% CPU / GPU inactiva).");
+        Console.WriteLine("[Hardware] Conecta la salida HDMI de esta notebook a tu capturadora.");
+
+        // Mostrar IPs locales
+        var localIps = Dns.GetHostEntry(Dns.GetHostName()).AddressList
+            .Where(ip => ip.AddressFamily == AddressFamily.InterNetwork && !IPAddress.IsLoopback(ip))
+            .Select(ip => ip.ToString())
+            .ToList();
+
+        Console.ForegroundColor = ConsoleColor.Green;
+        Console.WriteLine($"\n[Red] IP(s) local(es) de esta Notebook: {(localIps.Count > 0 ? string.Join(", ", localIps) : "127.0.0.1")}");
+        Console.ResetColor();
+
+        using var cts = new CancellationTokenSource();
+        Console.CancelKeyPress += (s, e) =>
+        {
+            e.Cancel = true;
+            cts.Cancel();
+        };
+
+        // 1. Iniciar simulador de periféricos Win32 (SendInput directo)
+        int controlPort = StreamConfig.DefaultControlPort;
+        using var simulator = new Win32InputSimulator(controlPort);
+        Console.WriteLine($"[KVM] Servidor de entrada remoto escuchando en puerto UDP {controlPort}...");
+
+        simulator.OnControllerConnected += ep =>
+        {
+            Console.ForegroundColor = ConsoleColor.Green;
+            Console.WriteLine($"\n[KVM] Controlador conectado desde {ep.Address}. ¡Control remoto activo!");
+            Console.ResetColor();
+        };
+
+        // 2. Iniciar descubrimiento automático en LAN (UDP Broadcast)
+        using var discovery = new LanDiscoveryService(isSender: true, port: StreamConfig.DefaultDiscoveryPort);
+        var announcement = new DiscoveryResponse
+        {
+            SenderName = Environment.MachineName,
+            ControlPort = controlPort,
+            VideoPort = 0 // El video va por cable HDMI
+        };
+
+        _ = Task.Run(() => discovery.StartSenderListenerAsync(
+            announcement,
+            cts.Token,
+            receiverEp =>
+            {
+                Console.WriteLine($"[Discovery] PC de escritorio detectada en {receiverEp.Address}.");
+            }));
+
+        Console.ForegroundColor = ConsoleColor.Yellow;
+        Console.WriteLine("\n>>> AGENTE ACTIVO. Presiona Ctrl+C para detener. <<<\n");
+        Console.ResetColor();
+
+        // Esperar cancelación
+        while (!cts.IsCancellationRequested)
+        {
+            await Task.Delay(1000, cts.Token).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        }
+
+        Console.WriteLine("\n[Apagado] Deteniendo agente KVM...");
+    }
+}
