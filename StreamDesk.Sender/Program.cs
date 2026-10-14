@@ -87,8 +87,8 @@ public static class Program
         if ((targetWidth % 2) != 0) targetWidth--;
         if ((targetHeight % 2) != 0) targetHeight--;
 
-        // Soporte de FPS configurables (--fps 60, --fps 75, --fps 90, --fps 120, etc.)
-        int targetFps = 60;
+        // Soporte de FPS configurables (predeterminado: 120 FPS para máxima fluidez y mínimo input lag)
+        int targetFps = 120;
         for (int i = 0; i < args.Length; i++)
         {
             if ((args[i].Equals("--fps", StringComparison.OrdinalIgnoreCase) || args[i].Equals("-fps", StringComparison.OrdinalIgnoreCase)) && i + 1 < args.Length && int.TryParse(args[i + 1], out int parsedFps))
@@ -97,6 +97,8 @@ public static class Program
                 break;
             }
         }
+
+        bool captureCursor = !args.Any(a => a.Equals("--no-cursor", StringComparison.OrdinalIgnoreCase) || a.Equals("--hide-cursor", StringComparison.OrdinalIgnoreCase));
 
         // Bitrate óptimo según la resolución de pantalla
         int? userBitrateMbps = null;
@@ -117,11 +119,12 @@ public static class Program
             TargetWidth = targetWidth,
             TargetHeight = targetHeight,
             TargetFps = targetFps,
-            BitrateKbps = bitrateKbps
+            BitrateKbps = bitrateKbps,
+            CaptureCursor = captureCursor
         };
 
         Console.WriteLine($"[Config] Resolución de streaming: {config.TargetWidth}x{config.TargetHeight} @ {config.TargetFps} FPS");
-        Console.WriteLine($"[Config] Bitrate objetivo: {config.BitrateKbps / 1000} Mbps | Codec: {config.PreferredCodec}");
+        Console.WriteLine($"[Config] Bitrate objetivo: {config.BitrateKbps / 1000} Mbps | Codec: {config.PreferredCodec} | Cursor remoto: {(config.CaptureCursor ? "Visible" : "Oculto (--no-cursor)")}");
 
         using var cts = new CancellationTokenSource();
         Console.CancelKeyPress += (s, e) =>
@@ -207,7 +210,7 @@ public static class Program
         {
             Console.WriteLine($"[Captura] Iniciando Windows.Graphics.Capture (VRAM Zero-Copy) a {config.TargetFps} FPS...");
             var wgc = new WindowsGraphicsCaptureEngine(d3d11Device, d3d11Context, winRtDevice);
-            wgc.Start(hMonitor, config.TargetWidth, config.TargetHeight, config.TargetFps);
+            wgc.Start(hMonitor, config.TargetWidth, config.TargetHeight, config.TargetFps, config.CaptureCursor);
             captureEngine = wgc;
             Console.ForegroundColor = ConsoleColor.Green;
             Console.WriteLine($"[Captura] Windows.Graphics.Capture activo a {config.TargetFps} FPS.");
@@ -219,7 +222,7 @@ public static class Program
             Console.WriteLine($"[Captura] Fallback a DXGI Desktop Duplication: {ex.Message}");
             Console.ResetColor();
             var dxgi = new DxgiDuplicationCaptureEngine(d3d11Device, d3d11Context);
-            dxgi.Start(hMonitor, config.TargetWidth, config.TargetHeight, config.TargetFps);
+            dxgi.Start(hMonitor, config.TargetWidth, config.TargetHeight, config.TargetFps, config.CaptureCursor);
             captureEngine = dxgi;
         }
 

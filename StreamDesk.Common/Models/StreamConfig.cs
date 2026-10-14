@@ -12,7 +12,7 @@ public class StreamConfig
 
     public int TargetWidth { get; set; } = 1920;
     public int TargetHeight { get; set; } = 1080;
-    public int TargetFps { get; set; } = 60;
+    public int TargetFps { get; set; } = 120;
     public int BitrateKbps { get; set; } = 25000; // 25 Mbps para LAN Ethernet Gigabit
     public int MaxRtpPayloadSize { get; set; } = 1400; // MTU Ethernet seguro para evitar fragmentación IP
     public bool EnableHardwareAcceleration { get; set; } = true;

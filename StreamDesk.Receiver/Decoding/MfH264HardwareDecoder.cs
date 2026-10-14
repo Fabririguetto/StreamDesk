@@ -32,12 +32,15 @@ public class MfH264HardwareDecoder : IDisposable
 
     public event Action<ID3D11Texture2D>? OnFrameDecoded;
 
-    public MfH264HardwareDecoder(ID3D11Device device, ID3D11DeviceContext context, int width = 1920, int height = 1080)
+    private int _fps = 120;
+
+    public MfH264HardwareDecoder(ID3D11Device device, ID3D11DeviceContext context, int width = 1920, int height = 1080, int fps = 120)
     {
         _device = device;
         _context = context;
         _width = width;
         _height = height;
+        _fps = fps > 0 ? fps : 120;
         _bgraBuffer = new byte[width * height * 4];
 
         InitializeDecoder();
@@ -184,8 +187,8 @@ public class MfH264HardwareDecoder : IDisposable
             buffer.CurrentLength = h264Data.Length;
 
             sample.AddBuffer(buffer);
-            sample.SampleTime = (_frameIndex++ * 10_000_000L) / 60;
-            sample.SampleDuration = 10_000_000L / 60;
+            sample.SampleTime = (_frameIndex++ * 10_000_000L) / _fps;
+            sample.SampleDuration = 10_000_000L / _fps;
 
             PullDecodedFrame();
 

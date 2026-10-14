@@ -9,6 +9,6 @@ public interface ICaptureEngine : IDisposable
 {
     event Action<ID3D11Texture2D, long>? OnFrameCaptured;
     bool IsRunning { get; }
-    void Start(IntPtr hMonitor, int width, int height, int fps = 60);
+    void Start(IntPtr hMonitor, int width, int height, int fps = 120, bool captureCursor = true);
     void Stop();
 }

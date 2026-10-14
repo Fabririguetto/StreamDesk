@@ -33,7 +33,7 @@ public class MfH264HardwareEncoder : IDisposable
 
     public event Action<byte[]>? OnEncodedFrame;
 
-    public MfH264HardwareEncoder(ID3D11Device device, ID3D11DeviceContext context, int width, int height, int fps = 60, int bitrateKbps = 25000)
+    public MfH264HardwareEncoder(ID3D11Device device, ID3D11DeviceContext context, int width, int height, int fps = 120, int bitrateKbps = 25000)
     {
         _device = device;
         _context = context;

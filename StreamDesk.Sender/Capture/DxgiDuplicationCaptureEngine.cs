@@ -33,13 +33,13 @@ public class DxgiDuplicationCaptureEngine : ICaptureEngine
     [System.Runtime.InteropServices.DllImport("winmm.dll", EntryPoint = "timeEndPeriod")]
     private static extern uint timeEndPeriod(uint uMilliseconds);
 
-    private int _targetFps = 60;
+    private int _targetFps = 120;
 
-    public void Start(IntPtr hMonitor, int width, int height, int fps = 60)
+    public void Start(IntPtr hMonitor, int width, int height, int fps = 120, bool captureCursor = true)
     {
         if (_isRunning) return;
 
-        _targetFps = fps > 0 ? fps : 60;
+        _targetFps = fps > 0 ? fps : 120;
         try { timeBeginPeriod(1); } catch { }
 
         InitializeDuplication();
