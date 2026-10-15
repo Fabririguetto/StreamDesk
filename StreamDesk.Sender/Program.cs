@@ -3,6 +3,7 @@ using System.Net;
 using System.Runtime.InteropServices;
 using StreamDesk.Common.Models;
 using StreamDesk.Common.Network;
+using StreamDesk.Common.Power;
 using StreamDesk.Sender.Capture;
 using StreamDesk.Sender.Encoding;
 using StreamDesk.Sender.Input;
@@ -59,6 +60,12 @@ public static class Program
         Console.WriteLine("==================================================================");
         Console.WriteLine("       StreamDesk Sender - Transmisor de Pantalla en LAN");
         Console.WriteLine("==================================================================");
+        Console.ResetColor();
+
+        // Prevenir que Windows apague la pantalla, suspenda o bloquee la notebook durante la transmisión
+        using var keepAwake = new ScreenKeepAwake();
+        Console.ForegroundColor = ConsoleColor.Magenta;
+        Console.WriteLine("[Energía] Pantalla siempre encendida: Bloqueo y suspensión de Windows desactivados.");
         Console.ResetColor();
 
         int screenWidth = GetSystemMetrics(SM_CXSCREEN);

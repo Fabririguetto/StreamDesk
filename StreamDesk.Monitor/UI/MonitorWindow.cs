@@ -4,6 +4,7 @@ using System.Net;
 using System.Windows.Forms;
 using StreamDesk.Common.Models;
 using StreamDesk.Common.Network;
+using StreamDesk.Common.Power;
 using StreamDesk.Monitor.Capture;
 using StreamDesk.Monitor.Input;
 using StreamDesk.Monitor.Rendering;
@@ -26,6 +27,7 @@ public class MonitorWindow : Form
     private MediaFoundationDeviceReader? _reader;
     private LowLevelKvmManager? _kvmManager;
     private LanDiscoveryService? _discoveryService;
+    private ScreenKeepAwake? _keepAwake;
 
     private List<VideoCaptureDeviceInfo> _devices = new();
     private bool _isBorderless;
@@ -217,6 +219,7 @@ public class MonitorWindow : Form
                 _renderer?.RenderFrame(pData, length, width, height, stride);
             };
             _reader.Start();
+            _keepAwake ??= new ScreenKeepAwake();
         }
         catch (Exception ex)
         {
@@ -229,6 +232,8 @@ public class MonitorWindow : Form
         _reader?.Stop();
         _reader?.Dispose();
         _reader = null;
+        _keepAwake?.Dispose();
+        _keepAwake = null;
         _renderer?.ClearScreen(new Color4(0.05f, 0.05f, 0.07f, 1.0f));
     }
 
@@ -365,6 +370,7 @@ public class MonitorWindow : Form
         if (disposing)
         {
             StopCapture();
+            _keepAwake?.Dispose();
             _kvmManager?.Dispose();
             _renderer?.Dispose();
             _discoveryService?.Dispose();

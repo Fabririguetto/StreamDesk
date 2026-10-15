@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using StreamDesk.Common.Input;
 using StreamDesk.Common.Models;
 using StreamDesk.Common.Network;
+using StreamDesk.Common.Power;
 
 namespace StreamDesk.Agent;
 
@@ -36,6 +37,12 @@ public static class Program
             e.Cancel = true;
             cts.Cancel();
         };
+
+        // 0. Prevenir que Windows bloquee la pantalla o suspenda la notebook
+        using var keepAwake = new ScreenKeepAwake();
+        Console.ForegroundColor = ConsoleColor.Magenta;
+        Console.WriteLine("[Energía] Pantalla siempre encendida: Bloqueo y suspensión de Windows desactivados.");
+        Console.ResetColor();
 
         // 1. Iniciar simulador de periféricos Win32 (SendInput directo)
         int controlPort = StreamConfig.DefaultControlPort;

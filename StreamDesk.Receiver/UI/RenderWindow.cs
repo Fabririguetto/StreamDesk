@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Sockets;
 using StreamDesk.Common.Models;
 using StreamDesk.Common.Network;
+using StreamDesk.Common.Power;
 using StreamDesk.Receiver.Decoding;
 using StreamDesk.Receiver.Transport;
 
@@ -14,6 +15,7 @@ namespace StreamDesk.Receiver.UI;
 /// </summary>
 public class RenderWindow : Form
 {
+    private readonly ScreenKeepAwake _keepAwake = new();
     private readonly D3D11Renderer _renderer;
     private readonly MfH264HardwareDecoder _decoder;
     private readonly UdpVideoReceiver _videoReceiver;
@@ -289,6 +291,7 @@ public class RenderWindow : Form
     {
         if (disposing)
         {
+            _keepAwake.Dispose();
             _videoReceiver.Dispose();
             _decoder.Dispose();
             _renderer.Dispose();
