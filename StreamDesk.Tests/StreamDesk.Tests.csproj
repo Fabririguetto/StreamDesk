@@ -23,9 +23,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\StreamDesk.Common\StreamDesk.Common.csproj" />
-    <ProjectReference Include="..\StreamDesk.Sender\StreamDesk.Sender.csproj" />
-    <ProjectReference Include="..\StreamDesk.Receiver\StreamDesk.Receiver.csproj" />
     <ProjectReference Include="..\StreamDesk.Monitor\StreamDesk.Monitor.csproj" />
+    <ProjectReference Include="..\StreamDesk.Agent\StreamDesk.Agent.csproj" />
   </ItemGroup>
 
 </Project>

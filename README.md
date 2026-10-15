@@ -1,41 +1,47 @@
 # StreamDesk 🚀
-### Solución de Streaming de Pantalla de Ultra Baja Latencia sobre LAN Ethernet (< 50 ms) para Windows
+### Solución Hardware + LAN KVM de Cero Latencia y 0% de CPU para Windows
 
-**StreamDesk** es una solución de alto rendimiento desarrollada en **C# (.NET 8)** para transmitir el escritorio de una **Notebook (Emisor)** a una **PC de Escritorio (Receptor)** a través de una red local Ethernet cableada, visualizándose en una ventana dedicada con aceleración de GPU y control KVM inverso.
+**StreamDesk** es una suite de alto rendimiento desarrollada en **C# (.NET 8)** para controlar una **Notebook** desde una **PC de Escritorio**:
+- **Video:** Flujo de video directo sin compresión por hardware conectando la salida HDMI de la notebook a una capturadora USB/PCIe en la PC de escritorio.
+- **Mouse y Teclado (KVM):** Reenvío de periféricos en tiempo real sobre red local Ethernet/Wi-Fi mediante paquetes binarios compactos UDP de 16 bytes.
+- **Multimonitor y Escritorio Extendido:** Detección de monitores conectados y mapeo de coordenadas sobre el Virtual Desktop de Windows.
+- **Sin permisos de Administrador:** Sistema de actividad y anti-bloqueo activo que previene la suspensión o bloqueo de la notebook sin requerir servicios ni privilegios elevados.
 
 ---
 
 ## 🏗️ Arquitectura del Sistema
 
-La solución está dividida en tres proyectos modulares:
+La solución está compuesta por:
 
 1. **`StreamDesk.Common`**:
    - Biblioteca compartida con contratos de red y serialización binaria.
-   - **`LanDiscoveryService`**: Descubrimiento Zero-Config en LAN vía UDP Broadcast (puerto `45454`).
-   - **`RtpPacket` / `RtpDepacketizer`**: Fragmentación y reensamblado en tiempo real según RFC 6184 (Single NALU y fragmentos FU-A) sobre UDP.
-   - **`ControlPacket`**: Estructura binaria de 16 bytes para reenvío de mouse y teclado sin latencia.
+   - **`Win32InputSimulator`**: Inyección de periféricos con `SendInput`, mapeo de monitores múltiples (`EnumDisplayMonitors`, `MONITORINFOEX`) y escalado al Virtual Desktop.
+   - **`ScreenKeepAwake`**: Prevención activa de bloqueo de sesión y suspensión sin derechos de administrador mediante `SetThreadExecutionState`, micro-jiggle de mouse y pulso `VK_F15`.
+   - **`ControlPacket`**: Estructura binaria de 16 bytes para reenvío instantáneo de mouse, rueda y teclado.
+   - **`LanDiscoveryService`**: Detección automática Zero-Config entre las computadoras vía UDP Broadcast (puerto `45454`).
 
-2. **`StreamDesk.Sender` (Notebook)**:
-   - **Captura GPU Zero-Copy**: Utiliza `Windows.Graphics.Capture` (óptimo para laptops con GPU híbrida Intel/AMD + NVIDIA) con fallback automático a `DXGI Desktop Duplication` (`IDXGIOutputDuplication`).
-   - **Codificación Hardware H.264**: Windows Media Foundation MFT (NVENC / QuickSync / AMF) configurado con CBR a 25 Mbps, 0 B-frames, GOP de 1 segundo y modo `Low-Latency` activo.
-   - **Emisor UDP**: Fragmentación RTP directa hacia el puerto `5004` del receptor.
-   - **Servidor KVM**: Recibe eventos de entrada en el puerto `5005` y los inyecta en Windows usando `SendInput` de la API de Win32.
+2. **`StreamDesk.Monitor` (PC de Escritorio / Host)**:
+   - Captura directa de video desde la capturadora mediante **Windows Media Foundation** (YUY2, NV12 o MJPEG).
+   - Renderizado con **DirectX 11** (`IDXGISwapChain1`) con latencia nula de presentación (`Present(0, 0)`).
+   - Gancho global de bajo nivel (`SetWindowsHookEx`) para teclado y reenvío de mouse sin captura restrictiva de cursor (`ClipCursor` deshabilitado).
+   - Interruptor de KVM por botón en pantalla y hotkey global.
+   - Selector de monitor objetivo (Auto, Laptop, HDMI, Escritorio Extendido) y hotkey para conmutar.
 
-3. **`StreamDesk.Receiver` (PC de Escritorio)**:
-   - **Receptor UDP**: Socket de alta prioridad con búfer de 8 MB para recibir ráfagas de frames.
-   - **Decodificador Hardware**: Media Foundation H.264 Decoder con aceleración por hardware.
-   - **Renderizador DirectX 11**: `IDXGISwapChain1` en modo `DXGI_SWAP_EFFECT_FLIP_DISCARD` con `Present(0, 0)` para latencia de presentación nula.
-   - **Ventana Interactiva**: Ventana redimensionable fluida, modo Borderless Fullscreen y captura de periféricos.
+3. **`StreamDesk.Agent` (Notebook / Cliente)**:
+   - Agente ultraligero con **0.0% de consumo de CPU/GPU**.
+   - No codifica video por software (el video sale por HDMI).
+   - Escucha en el puerto UDP `5005` e inyecta las entradas en la pantalla seleccionada.
+   - Configura automáticamente el perfil de energía para permitir cerrar la tapa de la laptop sin suspender (`LIDACTION 0`).
 
 ---
 
-## ⚡ Atajos de Teclado (Receptor)
+## ⚡ Atajos de Teclado (PC de Escritorio)
 
 | Atajo | Acción |
 | :--- | :--- |
-| **`F11`** | Alternar entre ventana redimensionable y **Pantalla Completa sin bordes (Borderless)**. |
-| **`F12`** | **Liberar / Capturar control KVM** (permite mover el cursor de vuelta a la PC principal). |
-| **`F3`** | Mostrar / Ocultar HUD de métricas en tiempo real (FPS, Bitrate, Paquetes). |
+| **`F12`** | **Pausar / Reanudar control KVM** (libera el control para usar la PC local). |
+| **`F11`** | Alternar entre ventana y **Pantalla Completa sin bordes (Borderless)**. |
+| **`F8`** | **Alternar Monitor Objetivo** (Auto HDMI / Pantalla 1 / Pantalla 2 / Escritorio Completo). |
 
 ---
 
@@ -43,7 +49,6 @@ La solución está dividida en tres proyectos modulares:
 
 Asegúrate de permitir estos puertos en el Firewall de Windows si se solicita:
 - **UDP 45454**: Descubrimiento automático en LAN (Broadcast).
-- **UDP 5004**: Transmisión de flujo de video H.264 RTP.
 - **UDP 5005**: Reenvío de eventos de mouse y teclado (KVM).
 
 ---
@@ -53,9 +58,9 @@ Asegúrate de permitir estos puertos en el Firewall de Windows si se solicita:
 ### Requisitos Previos:
 - Windows 10 (versión 1903 o superior) o Windows 11.
 - SDK de .NET 8 instalado (`dotnet --version` >= 8.0.x).
+- Capturadora de video HDMI (USB 3.0 Cam Link o PCIe) conectada a la PC de escritorio.
 
 ### 1. Compilar la Solución Completa
-Abre una terminal en la carpeta del proyecto y ejecuta:
 ```powershell
 dotnet build -c Release
 ```
@@ -65,32 +70,37 @@ dotnet build -c Release
 dotnet test
 ```
 
-### 3. Iniciar el Emisor en la Notebook
-```powershell
-dotnet run --project StreamDesk.Sender -c Release
+### 3. Iniciar el Agente en la Notebook
+Ejecuta el script incluido:
+```cmd
+run-agent.bat
 ```
-*Opcional: Si deseas especificar directamente la IP de la PC de escritorio, puedes pasarla como argumento:*
+O directamente con dotnet:
 ```powershell
-dotnet run --project StreamDesk.Sender -c Release -- 192.168.1.50
+dotnet run --project StreamDesk.Agent -c Release
 ```
 
-### 4. Iniciar el Receptor en la PC de Escritorio
-```powershell
-dotnet run --project StreamDesk.Receiver -c Release
+### 4. Iniciar el Monitor en la PC de Escritorio
+Ejecuta el script incluido:
+```cmd
+run-monitor.bat
 ```
-*La aplicación buscará automáticamente la notebook en la red. Si el broadcast está bloqueado por tu switch, te mostrará un cuadro de diálogo para ingresar la IP directamente.*
+O directamente con dotnet:
+```powershell
+dotnet run --project StreamDesk.Monitor -c Release
+```
 
 ---
 
 ## 📦 Publicación como Ejecutables Independientes (.exe)
 
-Para generar ejecutables `.exe` portables que no requieran instalar el SDK de .NET en las máquinas:
+Para generar ejecutables `.exe` portables autocontenidos (que no requieren tener .NET instalado en las máquinas):
 
-```powershell
-# Publicar Emisor (Notebook)
-dotnet publish StreamDesk.Sender -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -o ./publish/Sender
-
-# Publicar Receptor (PC de Escritorio)
-dotnet publish StreamDesk.Receiver -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -o ./publish/Receiver
+Ejecuta el script:
+```cmd
+publish.bat
 ```
-Los archivos ejecutables quedarán listos en `./publish/Sender/StreamDesk.Sender.exe` y `./publish/Receiver/StreamDesk.Receiver.exe`.
+
+Los binarios quedarán listos en:
+- `publish\Monitor\StreamDesk.Monitor.exe` (PC de Escritorio)
+- `publish\Agent\StreamDesk.Agent.exe` (Notebook)

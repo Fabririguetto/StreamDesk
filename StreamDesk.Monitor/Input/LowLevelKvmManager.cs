@@ -16,23 +16,6 @@ public class LowLevelKvmManager : IDisposable
     private const int WM_SYSKEYDOWN = 0x0104;
     private const int WM_SYSKEYUP = 0x0105;
 
-    private const int VK_CONTROL = 0x11;
-    private const int VK_LCONTROL = 0xA2;
-    private const int VK_RCONTROL = 0xA3;
-    private const int VK_MENU = 0x12; // ALT
-    private const int VK_LMENU = 0xA4;
-    private const int VK_RMENU = 0xA5;
-    private const int VK_F12 = 0x7B;
-
-    [StructLayout(LayoutKind.Sequential)]
-    public struct RECT
-    {
-        public int Left;
-        public int Top;
-        public int Right;
-        public int Bottom;
-    }
-
     [StructLayout(LayoutKind.Sequential)]
     private struct KBDLLHOOKSTRUCT
     {
@@ -59,26 +42,45 @@ public class LowLevelKvmManager : IDisposable
     private static extern IntPtr GetModuleHandle(string? lpModuleName);
 
     [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool ClipCursor(ref RECT lpRect);
+    private static extern IntPtr GetForegroundWindow();
 
     [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool ClipCursor(IntPtr lpRect);
-
-    [DllImport("user32.dll")]
-    private static extern short GetAsyncKeyState(int vKey);
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
 
     private readonly Socket _udpSocket;
     private IPEndPoint _targetEndPoint;
     private IntPtr _hookId = IntPtr.Zero;
     private LowLevelKeyboardProc? _proc;
-    private bool _isKvmActive;
-    private Rectangle _windowBounds;
     private bool _disposed;
+    private bool _isControlEnabled = true;
 
-    public bool IsKvmActive => _isKvmActive;
-    public event Action<bool>? OnKvmStateChanged; // true = Activo (en Notebook), false = Liberado (en PC)
+    public bool IsControlEnabled
+    {
+        get => _isControlEnabled;
+        set
+        {
+            if (_isControlEnabled != value)
+            {
+                _isControlEnabled = value;
+                OnKvmStateChanged?.Invoke(_isControlEnabled);
+            }
+        }
+    }
+
+    public bool IsKvmActive => _isControlEnabled;
+    public Func<bool>? CanSendKeyboard { get; set; }
+    public event Action<bool>? OnKvmStateChanged;
+
+    /// <summary>
+    /// Monitor de destino en la Notebook: 0 = Auto / Secundario HDMI, 1 = Pantalla 1, 2 = Pantalla 2, 255 = Todo el escritorio extendido
+    /// </summary>
+    public byte TargetDisplay { get; set; } = 0;
+
+    public bool ToggleControl()
+    {
+        IsControlEnabled = !IsControlEnabled;
+        return IsControlEnabled;
+    }
 
     public LowLevelKvmManager(string targetIp, int targetPort = 5005)
     {
@@ -113,42 +115,12 @@ public class LowLevelKvmManager : IDisposable
 
     public void SetKvmActive(bool active, Rectangle? bounds = null)
     {
-        if (bounds.HasValue)
-        {
-            _windowBounds = bounds.Value;
-        }
-
-        if (_isKvmActive == active) return;
-
-        _isKvmActive = active;
-
-        if (_isKvmActive)
-        {
-            // Confinar cursor dentro de la ventana del monitor para que no se escape
-            if (_windowBounds.Width > 0 && _windowBounds.Height > 0)
-            {
-                var rect = new RECT
-                {
-                    Left = _windowBounds.Left,
-                    Top = _windowBounds.Top,
-                    Right = _windowBounds.Right,
-                    Bottom = _windowBounds.Bottom
-                };
-                ClipCursor(ref rect);
-            }
-        }
-        else
-        {
-            // Liberar cursor al sistema operativo del host
-            ClipCursor(IntPtr.Zero);
-        }
-
-        OnKvmStateChanged?.Invoke(_isKvmActive);
+        IsControlEnabled = active;
     }
 
     public void ToggleKvm(Rectangle? bounds = null)
     {
-        SetKvmActive(!_isKvmActive, bounds);
+        ToggleControl();
     }
 
     private void InstallKeyboardHook()
@@ -167,38 +139,36 @@ public class LowLevelKvmManager : IDisposable
             bool isKeyDown = (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN);
             bool isKeyUp = (msg == WM_KEYUP || msg == WM_SYSKEYUP);
 
-            var kbd = Marshal.PtrToStructure<KBDLLHOOKSTRUCT>(lParam);
-            uint vkCode = kbd.vkCode;
-
-            // 1. Detectar atajo de escape: Ctrl + Alt presionado o F12
-            bool isCtrlDown = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
-            bool isAltDown = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
-
-            if (isKeyDown)
+            if (isKeyDown || isKeyUp)
             {
-                // Si presionó Ctrl + Alt, o F12
-                if ((isCtrlDown && isAltDown) || vkCode == VK_F12)
-                {
-                    ToggleKvm();
-                    return (IntPtr)1; // Consumir el atajo para no enviar ruido
-                }
-            }
+                IntPtr foreground = GetForegroundWindow();
+                GetWindowThreadProcessId(foreground, out uint pid);
 
-            // 2. Si KVM está activo, traspasar tecla a la Notebook
-            if (_isKvmActive)
-            {
-                var packet = new ControlPacket
+                // Solo enviar teclado a la Notebook si el control KVM está habilitado y la ventana en foco pertenece a nuestra aplicación
+                if (_isControlEnabled && pid == (uint)Environment.ProcessId && (CanSendKeyboard == null || CanSendKeyboard()))
                 {
-                    PacketType = isKeyDown ? ControlPacketType.KeyDown : ControlPacketType.KeyUp,
-                    KeyCode = (ushort)vkCode,
-                    Timestamp = (uint)Environment.TickCount
-                };
-                SendPacket(ref packet);
+                    var kbd = Marshal.PtrToStructure<KBDLLHOOKSTRUCT>(lParam);
+                    uint vkCode = kbd.vkCode;
 
-                // En modo KVM, consumimos las teclas especiales para que apliquen a la notebook y no al host
-                if (vkCode == 0x5B || vkCode == 0x5C) // Windows Key
-                {
-                    return (IntPtr)1;
+                    // F12 se reserva para conmutar el switch local de KVM
+                    if (vkCode == 0x7B)
+                    {
+                        return CallNextHookEx(_hookId, nCode, wParam, lParam);
+                    }
+
+                    var packet = new ControlPacket
+                    {
+                        PacketType = isKeyDown ? ControlPacketType.KeyDown : ControlPacketType.KeyUp,
+                        KeyCode = (ushort)vkCode,
+                        Timestamp = (uint)Environment.TickCount
+                    };
+                    SendPacket(ref packet);
+
+                    // Consumir la tecla Windows para que no abra el menú inicio del host mientras se controla la Notebook
+                    if (vkCode == 0x5B || vkCode == 0x5C)
+                    {
+                        return (IntPtr)1;
+                    }
                 }
             }
         }
@@ -208,7 +178,7 @@ public class LowLevelKvmManager : IDisposable
 
     public void SendMouseMove(int clientX, int clientY, int clientWidth, int clientHeight)
     {
-        if (!_isKvmActive || clientWidth <= 0 || clientHeight <= 0) return;
+        if (!_isControlEnabled || clientWidth <= 0 || clientHeight <= 0) return;
 
         ushort normX = (ushort)Math.Clamp((clientX * 65535) / clientWidth, 0, 65535);
         ushort normY = (ushort)Math.Clamp((clientY * 65535) / clientHeight, 0, 65535);
@@ -218,6 +188,7 @@ public class LowLevelKvmManager : IDisposable
             PacketType = ControlPacketType.MouseMove,
             NormalizedX = normX,
             NormalizedY = normY,
+            TargetDisplay = TargetDisplay,
             Timestamp = (uint)Environment.TickCount
         };
         SendPacket(ref packet);
@@ -225,7 +196,7 @@ public class LowLevelKvmManager : IDisposable
 
     public void SendMouseButton(ControlPacketType type, MouseButtonType button, int clientX, int clientY, int clientWidth, int clientHeight)
     {
-        if (!_isKvmActive || clientWidth <= 0 || clientHeight <= 0) return;
+        if (!_isControlEnabled || clientWidth <= 0 || clientHeight <= 0) return;
 
         ushort normX = (ushort)Math.Clamp((clientX * 65535) / clientWidth, 0, 65535);
         ushort normY = (ushort)Math.Clamp((clientY * 65535) / clientHeight, 0, 65535);
@@ -236,6 +207,7 @@ public class LowLevelKvmManager : IDisposable
             ButtonOrFlags = (byte)button,
             NormalizedX = normX,
             NormalizedY = normY,
+            TargetDisplay = TargetDisplay,
             Timestamp = (uint)Environment.TickCount
         };
         SendPacket(ref packet);
@@ -243,12 +215,13 @@ public class LowLevelKvmManager : IDisposable
 
     public void SendMouseWheel(int delta)
     {
-        if (!_isKvmActive) return;
+        if (!_isControlEnabled) return;
 
         var packet = new ControlPacket
         {
             PacketType = ControlPacketType.MouseWheel,
             WheelDelta = (short)delta,
+            TargetDisplay = TargetDisplay,
             Timestamp = (uint)Environment.TickCount
         };
         SendPacket(ref packet);
@@ -268,8 +241,6 @@ public class LowLevelKvmManager : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
-
-        ClipCursor(IntPtr.Zero);
 
         if (_hookId != IntPtr.Zero)
         {

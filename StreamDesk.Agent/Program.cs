@@ -49,6 +49,14 @@ public static class Program
         using var simulator = new Win32InputSimulator(controlPort);
         Console.WriteLine($"[KVM] Servidor de entrada remoto escuchando en puerto UDP {controlPort}...");
 
+        Console.ForegroundColor = ConsoleColor.Cyan;
+        Console.WriteLine($"[Monitores] Detectados ({simulator.Displays.Count}):");
+        foreach (var disp in simulator.Displays)
+        {
+            Console.WriteLine($"  - Monitor {disp.Index}: {disp.Bounds.Width}x{disp.Bounds.Height} en ({disp.Bounds.Left},{disp.Bounds.Top}) {(disp.IsPrimary ? "[Principal/Notebook]" : "[Secundario/HDMI]")}");
+        }
+        Console.ResetColor();
+
         string? lastControllerIp = null;
         simulator.OnControllerConnected += ep =>
         {

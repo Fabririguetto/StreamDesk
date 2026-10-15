@@ -24,7 +24,12 @@ public sealed class ScreenKeepAwake : IDisposable
     [DllImport("user32.dll")]
     private static extern void mouse_event(uint dwFlags, int dx, int dy, uint dwData, UIntPtr dwExtraInfo);
 
+    [DllImport("user32.dll")]
+    private static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
+
     private const uint MOUSEEVENTF_MOVE = 0x0001;
+    private const uint KEYEVENTF_KEYUP = 0x0002;
+    private const byte VK_F15 = 0x7E; // Tecla virtual inofensiva reservada
 
     private readonly Timer? _heartbeatTimer;
     private bool _isActive;
@@ -63,9 +68,7 @@ public sealed class ScreenKeepAwake : IDisposable
         if (_disposed) return;
         _isActive = true;
         SetThreadExecutionState(ExecutionState.ES_CONTINUOUS | ExecutionState.ES_DISPLAY_REQUIRED | ExecutionState.ES_SYSTEM_REQUIRED | ExecutionState.ES_USER_PRESENT);
-        // Simular un movimiento delta 0,0 para reiniciar inmediatamente el temporizador GetLastInputInfo de Windows
-        // evitando que se dispare la pantalla de bloqueo o protector de pantalla.
-        mouse_event(MOUSEEVENTF_MOVE, 0, 0, 0, UIntPtr.Zero);
+        SimulateUserPresence();
     }
 
     /// <summary>
@@ -83,10 +86,28 @@ public sealed class ScreenKeepAwake : IDisposable
         if (_isActive && !_disposed)
         {
             // Renovar periódicamente los flags para reiniciar el temporizador de inactividad de energía
-            SetThreadExecutionState(ExecutionState.ES_DISPLAY_REQUIRED | ExecutionState.ES_SYSTEM_REQUIRED | ExecutionState.ES_USER_PRESENT);
-            // Simular evento neutro de usuario para reiniciar GetLastInputInfo y evitar el bloqueo por inactividad
-            mouse_event(MOUSEEVENTF_MOVE, 0, 0, 0, UIntPtr.Zero);
+            SetThreadExecutionState(ExecutionState.ES_CONTINUOUS | ExecutionState.ES_DISPLAY_REQUIRED | ExecutionState.ES_SYSTEM_REQUIRED | ExecutionState.ES_USER_PRESENT);
+            SimulateUserPresence();
         }
+    }
+
+    /// <summary>
+    /// Reinicia activamente el contador GetLastInputInfo del kernel de Windows sin afectar al usuario.
+    /// Funciona sin permisos de administrador para anular políticas de inactividad (GPO).
+    /// </summary>
+    private static void SimulateUserPresence()
+    {
+        try
+        {
+            // 1. Micro-movimiento de 1px ida y vuelta (desplazamiento neto 0)
+            mouse_event(MOUSEEVENTF_MOVE, 1, 0, 0, UIntPtr.Zero);
+            mouse_event(MOUSEEVENTF_MOVE, -1, 0, 0, UIntPtr.Zero);
+
+            // 2. Pulso de tecla virtual inofensiva F15 para forzar el reinicio de inactividad de teclado
+            keybd_event(VK_F15, 0, 0, UIntPtr.Zero);
+            keybd_event(VK_F15, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+        }
+        catch { }
     }
 
     public void Dispose()

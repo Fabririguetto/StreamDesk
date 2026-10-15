@@ -18,9 +18,11 @@ public class MonitorWindow : Form
     private readonly Panel _toolbarPanel;
     private readonly ComboBox _deviceComboBox;
     private readonly ComboBox _formatComboBox;
+    private readonly ComboBox _displayComboBox;
     private readonly TextBox _ipTextBox;
     private readonly Button _connectButton;
     private readonly Button _fullscreenButton;
+    private readonly Button _kvmToggleButton;
     private readonly Label _statusLabel;
 
     private DirectX11MonitorRenderer? _renderer;
@@ -34,6 +36,11 @@ public class MonitorWindow : Form
     private FormBorderStyle _prevBorderStyle;
     private FormWindowState _prevWindowState;
     private Rectangle _prevBounds;
+
+    private record DisplayOption(string Name, byte Id)
+    {
+        public override string ToString() => Name;
+    }
 
     public MonitorWindow(string? defaultIp = null)
     {
@@ -64,34 +71,63 @@ public class MonitorWindow : Form
             Padding = new Padding(8, 6, 8, 6)
         };
 
-        var deviceLabel = new Label { Text = "Dispositivo:", AutoSize = true, ForeColor = System.Drawing.Color.LightGray, Top = 12, Left = 10 };
-        _deviceComboBox = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 220, Top = 9, Left = 85, BackColor = System.Drawing.Color.FromArgb(45, 45, 52), ForeColor = System.Drawing.Color.White };
+        var deviceLabel = new Label { Text = "Dispositivo:", AutoSize = true, ForeColor = System.Drawing.Color.LightGray, Top = 12, Left = 8 };
+        _deviceComboBox = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 175, Top = 9, Left = 75, BackColor = System.Drawing.Color.FromArgb(45, 45, 52), ForeColor = System.Drawing.Color.White };
         _deviceComboBox.SelectedIndexChanged += OnDeviceSelected;
 
-        var formatLabel = new Label { Text = "Formato:", AutoSize = true, ForeColor = System.Drawing.Color.LightGray, Top = 12, Left = 315 };
-        _formatComboBox = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 180, Top = 9, Left = 370, BackColor = System.Drawing.Color.FromArgb(45, 45, 52), ForeColor = System.Drawing.Color.White };
+        var formatLabel = new Label { Text = "Formato:", AutoSize = true, ForeColor = System.Drawing.Color.LightGray, Top = 12, Left = 258 };
+        _formatComboBox = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 140, Top = 9, Left = 312, BackColor = System.Drawing.Color.FromArgb(45, 45, 52), ForeColor = System.Drawing.Color.White };
 
-        _connectButton = new Button { Text = "Iniciar Video", Width = 95, Height = 26, Top = 8, Left = 560, BackColor = System.Drawing.Color.FromArgb(0, 122, 204), ForeColor = System.Drawing.Color.White, FlatStyle = FlatStyle.Flat };
+        _connectButton = new Button { Text = "Iniciar Video", Width = 90, Height = 26, Top = 8, Left = 460, BackColor = System.Drawing.Color.FromArgb(0, 122, 204), ForeColor = System.Drawing.Color.White, FlatStyle = FlatStyle.Flat };
         _connectButton.Click += OnToggleCaptureClicked;
 
-        var ipLabel = new Label { Text = "IP Notebook:", AutoSize = true, ForeColor = System.Drawing.Color.LightGray, Top = 12, Left = 665 };
-        _ipTextBox = new TextBox { Width = 110, Top = 9, Left = 745, Text = defaultIp ?? StreamConfig.DefaultBroadcastSubnet, BackColor = System.Drawing.Color.FromArgb(45, 45, 52), ForeColor = System.Drawing.Color.White };
+        var ipLabel = new Label { Text = "IP:", AutoSize = true, ForeColor = System.Drawing.Color.LightGray, Top = 12, Left = 558 };
+        _ipTextBox = new TextBox { Width = 95, Top = 9, Left = 580, Text = defaultIp ?? StreamConfig.DefaultBroadcastSubnet, BackColor = System.Drawing.Color.FromArgb(45, 45, 52), ForeColor = System.Drawing.Color.White };
         _ipTextBox.TextChanged += (s, e) => _kvmManager?.UpdateTargetIp(_ipTextBox.Text.Trim());
+
+        var displayLabel = new Label { Text = "Monitor (F8):", AutoSize = true, ForeColor = System.Drawing.Color.LightGray, Top = 12, Left = 684 };
+        _displayComboBox = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 145, Top = 9, Left = 760, BackColor = System.Drawing.Color.FromArgb(45, 45, 52), ForeColor = System.Drawing.Color.White };
+        _displayComboBox.Items.Add(new DisplayOption("Auto (HDMI)", 0));
+        _displayComboBox.Items.Add(new DisplayOption("Monitor 1 (Laptop)", 1));
+        _displayComboBox.Items.Add(new DisplayOption("Monitor 2 (HDMI)", 2));
+        _displayComboBox.Items.Add(new DisplayOption("Todo el Escritorio", 255));
+        _displayComboBox.SelectedIndex = 0;
+        _displayComboBox.SelectedIndexChanged += (s, e) =>
+        {
+            if (_kvmManager != null && _displayComboBox.SelectedItem is DisplayOption opt)
+            {
+                _kvmManager.TargetDisplay = opt.Id;
+            }
+        };
+
+        _kvmToggleButton = new Button
+        {
+            Text = "🟢 KVM: ON (F12)",
+            Width = 125,
+            Height = 26,
+            Top = 8,
+            Left = 915,
+            BackColor = System.Drawing.Color.FromArgb(46, 125, 50),
+            ForeColor = System.Drawing.Color.White,
+            FlatStyle = FlatStyle.Flat,
+            Font = new Font(Font.FontFamily, 8.5f, FontStyle.Bold)
+        };
+        _kvmToggleButton.Click += (s, e) => ToggleKvmControl();
 
         _statusLabel = new Label
         {
-            Text = "KVM: LIBERADO (Clic para capturar | Atajo: Ctrl+Alt)",
+            Text = "Activo",
             AutoSize = true,
-            Top = 12,
-            Left = 865,
-            ForeColor = System.Drawing.Color.Orange,
-            Font = new Font(Font, FontStyle.Bold)
+            Top = 13,
+            Left = 1048,
+            ForeColor = System.Drawing.Color.LimeGreen,
+            Font = new Font(Font, FontStyle.Regular)
         };
 
-        _fullscreenButton = new Button { Text = "⛶ Fullscreen (F11)", Width = 115, Height = 26, Top = 8, Left = 1240, Anchor = AnchorStyles.Top | AnchorStyles.Right, BackColor = System.Drawing.Color.FromArgb(50, 50, 60), ForeColor = System.Drawing.Color.White, FlatStyle = FlatStyle.Flat };
+        _fullscreenButton = new Button { Text = "⛶ Fullscreen (F11)", Width = 115, Height = 26, Top = 8, Left = 1150, Anchor = AnchorStyles.Top | AnchorStyles.Right, BackColor = System.Drawing.Color.FromArgb(50, 50, 60), ForeColor = System.Drawing.Color.White, FlatStyle = FlatStyle.Flat };
         _fullscreenButton.Click += (s, e) => ToggleBorderless();
 
-        _toolbarPanel.Controls.AddRange([deviceLabel, _deviceComboBox, formatLabel, _formatComboBox, _connectButton, ipLabel, _ipTextBox, _statusLabel, _fullscreenButton]);
+        _toolbarPanel.Controls.AddRange([deviceLabel, _deviceComboBox, formatLabel, _formatComboBox, _connectButton, ipLabel, _ipTextBox, displayLabel, _displayComboBox, _kvmToggleButton, _statusLabel, _fullscreenButton]);
 
         Controls.Add(_renderPanel);
         Controls.Add(_toolbarPanel);
@@ -115,30 +151,44 @@ public class MonitorWindow : Form
     {
         string targetIp = _ipTextBox.Text.Trim();
         _kvmManager = new LowLevelKvmManager(targetIp, StreamConfig.DefaultControlPort);
-        _kvmManager.OnKvmStateChanged += active =>
+        if (_displayComboBox.SelectedItem is DisplayOption opt)
+        {
+            _kvmManager.TargetDisplay = opt.Id;
+        }
+        _kvmManager.CanSendKeyboard = () => !_ipTextBox.Focused;
+        _kvmManager.OnKvmStateChanged += enabled =>
         {
             if (InvokeRequired)
             {
-                BeginInvoke(() => UpdateKvmUi(active));
+                BeginInvoke(() => UpdateKvmUi(enabled));
             }
             else
             {
-                UpdateKvmUi(active);
+                UpdateKvmUi(enabled);
             }
         };
     }
 
-    private void UpdateKvmUi(bool active)
+    private void ToggleKvmControl()
     {
-        if (active)
+        _kvmManager?.ToggleControl();
+    }
+
+    private void UpdateKvmUi(bool enabled)
+    {
+        if (enabled)
         {
-            _statusLabel.Text = "KVM ACTIVO (Controlando Notebook | Atajo: Ctrl+Alt para liberar)";
+            _kvmToggleButton.Text = "🟢 KVM: ACTIVO (F12)";
+            _kvmToggleButton.BackColor = System.Drawing.Color.FromArgb(46, 125, 50);
+            _statusLabel.Text = "Control activo";
             _statusLabel.ForeColor = System.Drawing.Color.LimeGreen;
         }
         else
         {
-            _statusLabel.Text = "KVM LIBERADO (Mouse en PC | Clic en pantalla para controlar)";
-            _statusLabel.ForeColor = System.Drawing.Color.Orange;
+            _kvmToggleButton.Text = "🔴 KVM: PAUSADO (F12)";
+            _kvmToggleButton.BackColor = System.Drawing.Color.FromArgb(180, 40, 40);
+            _statusLabel.Text = "Control pausado (solo visor)";
+            _statusLabel.ForeColor = System.Drawing.Color.IndianRed;
         }
     }
 
@@ -261,12 +311,7 @@ public class MonitorWindow : Form
     {
         if (_kvmManager == null) return;
 
-        if (!_kvmManager.IsKvmActive)
-        {
-            // Activar KVM al hacer clic
-            Rectangle screenBounds = _renderPanel.RectangleToScreen(_renderPanel.ClientRectangle);
-            _kvmManager.SetKvmActive(true, screenBounds);
-        }
+        _renderPanel.Focus();
 
         var btn = e.Button switch
         {
@@ -280,7 +325,7 @@ public class MonitorWindow : Form
 
     private void OnRenderPanelMouseUp(object? sender, MouseEventArgs e)
     {
-        if (_kvmManager == null || !_kvmManager.IsKvmActive) return;
+        if (_kvmManager == null) return;
 
         var btn = e.Button switch
         {
@@ -294,45 +339,50 @@ public class MonitorWindow : Form
 
     private void OnRenderPanelMouseMove(object? sender, MouseEventArgs e)
     {
-        if (_kvmManager != null && _kvmManager.IsKvmActive)
-        {
-            _kvmManager.SendMouseMove(e.X, e.Y, _renderPanel.Width, _renderPanel.Height);
-        }
+        _kvmManager?.SendMouseMove(e.X, e.Y, _renderPanel.Width, _renderPanel.Height);
 
-        // Auto-mostrar toolbar cuando el mouse está arriba y KVM no está activo
-        if (!_kvmManager?.IsKvmActive ?? true)
+        // Auto-mostrar toolbar cuando el mouse está en el borde superior en modo fullscreen
+        if (_isBorderless && e.Y < 10 && !_toolbarPanel.Visible)
         {
-            if (e.Y < 50 && !_toolbarPanel.Visible)
-            {
-                _toolbarPanel.Visible = true;
-            }
+            _toolbarPanel.Visible = true;
         }
     }
 
     private void OnRenderPanelMouseWheel(object? sender, MouseEventArgs e)
     {
-        if (_kvmManager != null && _kvmManager.IsKvmActive)
-        {
-            _kvmManager.SendMouseWheel(e.Delta);
-        }
+        _kvmManager?.SendMouseWheel(e.Delta);
     }
 
     private void OnWindowKeyDown(object? sender, KeyEventArgs e)
     {
-        if (e.KeyCode == Keys.F11)
+        if (e.KeyCode == Keys.F8)
+        {
+            CycleTargetDisplay();
+            e.Handled = true;
+        }
+        else if (e.KeyCode == Keys.F11)
         {
             ToggleBorderless();
             e.Handled = true;
+        }
+        else if (e.KeyCode == Keys.F12)
+        {
+            ToggleKvmControl();
+            e.Handled = true;
+        }
+    }
+
+    private void CycleTargetDisplay()
+    {
+        if (_displayComboBox.Items.Count > 0)
+        {
+            int next = (_displayComboBox.SelectedIndex + 1) % _displayComboBox.Items.Count;
+            _displayComboBox.SelectedIndex = next;
         }
     }
 
     private void OnWindowResize(object? sender, EventArgs e)
     {
-        if (_kvmManager != null && _kvmManager.IsKvmActive)
-        {
-            Rectangle screenBounds = _renderPanel.RectangleToScreen(_renderPanel.ClientRectangle);
-            _kvmManager.SetKvmActive(true, screenBounds);
-        }
     }
 
     private void ToggleBorderless()
@@ -356,12 +406,6 @@ public class MonitorWindow : Form
             Bounds = _prevBounds;
             WindowState = _prevWindowState;
             _isBorderless = false;
-        }
-
-        if (_kvmManager != null && _kvmManager.IsKvmActive)
-        {
-            Rectangle screenBounds = _renderPanel.RectangleToScreen(_renderPanel.ClientRectangle);
-            _kvmManager.SetKvmActive(true, screenBounds);
         }
     }
 
