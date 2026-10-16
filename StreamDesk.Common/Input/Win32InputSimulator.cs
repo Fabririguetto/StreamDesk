@@ -115,8 +115,10 @@ public class Win32InputSimulator : IDisposable
     private bool _disposed;
 
     public IReadOnlyList<DisplayInfo> Displays => _displays;
+    public byte ActiveDisplayMode { get; set; } = 2; // 1 = Laptop, 2 = HDMI, 3 = Dual
     public event Action<IPEndPoint>? OnControllerConnected;
     public event Action<ControlPacketType>? OnPacketReceived;
+    public event Action<byte>? OnDisplayModeChanged;
 
     public Win32InputSimulator(int controlPort = 5005)
     {
@@ -168,6 +170,9 @@ public class Win32InputSimulator : IDisposable
         }
 
         DisplayInfo? target = null;
+        ushort finalNormX = normX;
+        ushort finalNormY = normY;
+
         lock (_displays)
         {
             if (_displays.Count == 0)
@@ -180,15 +185,36 @@ public class Win32InputSimulator : IDisposable
                 return (normX, normY);
             }
 
-            if (targetDisplay == 0)
+            var primary = _displays.FirstOrDefault(d => d.IsPrimary) ?? _displays[0];
+            var secondary = _displays.FirstOrDefault(d => !d.IsPrimary) ?? primary;
+
+            if (targetDisplay == 3) // Dual: Ambas pantallas lado a lado
             {
-                // Auto: Si hay múltiples monitores, mapear a la salida HDMI / secundaria que suele ser el monitor extendido
-                target = _displays.FirstOrDefault(d => !d.IsPrimary) ?? _displays[0];
+                if (normX < 32768)
+                {
+                    // Mitad izquierda: Pantalla 1 (Laptop)
+                    target = primary;
+                    finalNormX = (ushort)Math.Clamp(((long)normX * 65535) / 32767, 0, 65535);
+                }
+                else
+                {
+                    // Mitad derecha: Pantalla 2 (HDMI)
+                    target = secondary;
+                    finalNormX = (ushort)Math.Clamp(((long)(normX - 32768) * 65535) / 32767, 0, 65535);
+                }
+            }
+            else if (targetDisplay == 1) // Pantalla 1 (Laptop)
+            {
+                target = primary;
+            }
+            else if (targetDisplay == 2 || targetDisplay == 0) // Pantalla 2 (HDMI) o Auto
+            {
+                target = secondary;
             }
             else
             {
                 int idx = targetDisplay - 1;
-                target = (idx >= 0 && idx < _displays.Count) ? _displays[idx] : _displays[0];
+                target = (idx >= 0 && idx < _displays.Count) ? _displays[idx] : primary;
             }
         }
 
@@ -198,8 +224,8 @@ public class Win32InputSimulator : IDisposable
         }
 
         // 1. Calcular coordenadas en píxeles del monitor objetivo
-        int pixelX = target.Bounds.Left + (int)((long)normX * Math.Max(1, target.Bounds.Width - 1) / 65535);
-        int pixelY = target.Bounds.Top + (int)((long)normY * Math.Max(1, target.Bounds.Height - 1) / 65535);
+        int pixelX = target.Bounds.Left + (int)((long)finalNormX * Math.Max(1, target.Bounds.Width - 1) / 65535);
+        int pixelY = target.Bounds.Top + (int)((long)finalNormY * Math.Max(1, target.Bounds.Height - 1) / 65535);
 
         // 2. Normalizar respecto al Virtual Desktop global de Windows (0 a 65535)
         int normVx = (int)(((long)(pixelX - vLeft) * 65535) / Math.Max(1, vWidth - 1));
@@ -297,6 +323,11 @@ public class Win32InputSimulator : IDisposable
                 inputs[0].u.ki.wVk = packet.KeyCode;
                 inputs[0].u.ki.dwFlags = KEYEVENTF_KEYUP;
                 SendInput(1, inputs, Marshal.SizeOf<INPUT>());
+                break;
+
+            case ControlPacketType.SwitchDisplay:
+                ActiveDisplayMode = packet.TargetDisplay;
+                OnDisplayModeChanged?.Invoke(packet.TargetDisplay);
                 break;
         }
     }

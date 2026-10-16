@@ -57,6 +57,10 @@ public static class Program
         }
         Console.ResetColor();
 
+        // 2. Iniciar servicio de proyector e intercambio de pantallas por hardware
+        using var mirrorService = new StreamDesk.Agent.Mirroring.DisplayMirrorService(simulator);
+        Console.WriteLine("[Proyector] Servicio de conmutación de pantallas activo (Monitor 1, Monitor 2 y Dual).");
+
         string? lastControllerIp = null;
         simulator.OnControllerConnected += ep =>
         {

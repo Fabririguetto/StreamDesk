@@ -1,4 +1,5 @@
 using StreamDesk.Common.Input;
+using StreamDesk.Common.Network;
 using Xunit;
 
 namespace StreamDesk.Tests;
@@ -30,6 +31,22 @@ public class MultiMonitorMappingTests
         var (maxX, maxY) = simulator.MapToVirtualDesktop(65535, 65535, 0);
         Assert.InRange(maxX, 0, 65535);
         Assert.InRange(maxY, 0, 65535);
+    }
+
+    [Fact]
+    public void MapToVirtualDesktop_DualMode_SplitsCoordinatesCorrectly()
+    {
+        using var simulator = new Win32InputSimulator(5096);
+
+        // Mitad izquierda (Monitor 1): 16384 -> dentro del rango
+        var (leftX, leftY) = simulator.MapToVirtualDesktop(16384, 30000, 3);
+        Assert.InRange(leftX, 0, 65535);
+        Assert.InRange(leftY, 0, 65535);
+
+        // Mitad derecha (Monitor 2): 49152 -> dentro del rango
+        var (rightX, rightY) = simulator.MapToVirtualDesktop(49152, 30000, 3);
+        Assert.InRange(rightX, 0, 65535);
+        Assert.InRange(rightY, 0, 65535);
     }
 
     [Fact]

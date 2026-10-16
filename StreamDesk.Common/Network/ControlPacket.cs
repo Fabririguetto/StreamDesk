@@ -9,7 +9,8 @@ public enum ControlPacketType : byte
     MouseUp = 0x03,
     MouseWheel = 0x04,
     KeyDown = 0x05,
-    KeyUp = 0x06
+    KeyUp = 0x06,
+    SwitchDisplay = 0x07
 }
 
 public enum MouseButtonType : byte

@@ -227,6 +227,18 @@ public class LowLevelKvmManager : IDisposable
         SendPacket(ref packet);
     }
 
+    public void SendDisplaySwitch(byte targetDisplay)
+    {
+        TargetDisplay = targetDisplay;
+        var packet = new ControlPacket
+        {
+            PacketType = ControlPacketType.SwitchDisplay,
+            TargetDisplay = targetDisplay,
+            Timestamp = (uint)Environment.TickCount
+        };
+        SendPacket(ref packet);
+    }
+
     private void SendPacket(ref ControlPacket packet)
     {
         try

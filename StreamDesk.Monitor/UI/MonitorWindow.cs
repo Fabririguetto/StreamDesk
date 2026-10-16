@@ -47,14 +47,14 @@ public class MonitorWindow : Form
         Text = "StreamDesk Monitor - Pantalla Remota & KVM";
         ClientSize = new System.Drawing.Size(1280, 720);
         StartPosition = FormStartPosition.CenterScreen;
-        BackColor = System.Drawing.Color.FromArgb(18, 18, 22);
+        BackColor = System.Drawing.Color.Black;
         KeyPreview = true;
 
-        // Panel de renderizado DirectX
+        // Panel de renderizado DirectX (16:9 centrado con barras negras automáticas)
         _renderPanel = new Panel
         {
-            Dock = DockStyle.Fill,
-            BackColor = System.Drawing.Color.FromArgb(12, 12, 16)
+            Dock = DockStyle.None,
+            BackColor = System.Drawing.Color.Black
         };
         _renderPanel.MouseDown += OnRenderPanelMouseDown;
         _renderPanel.MouseUp += OnRenderPanelMouseUp;
@@ -85,18 +85,17 @@ public class MonitorWindow : Form
         _ipTextBox = new TextBox { Width = 95, Top = 9, Left = 580, Text = defaultIp ?? StreamConfig.DefaultBroadcastSubnet, BackColor = System.Drawing.Color.FromArgb(45, 45, 52), ForeColor = System.Drawing.Color.White };
         _ipTextBox.TextChanged += (s, e) => _kvmManager?.UpdateTargetIp(_ipTextBox.Text.Trim());
 
-        var displayLabel = new Label { Text = "Monitor (F8):", AutoSize = true, ForeColor = System.Drawing.Color.LightGray, Top = 12, Left = 684 };
-        _displayComboBox = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 145, Top = 9, Left = 760, BackColor = System.Drawing.Color.FromArgb(45, 45, 52), ForeColor = System.Drawing.Color.White };
-        _displayComboBox.Items.Add(new DisplayOption("Auto (HDMI)", 0));
+        var displayLabel = new Label { Text = "Pantalla (F8):", AutoSize = true, ForeColor = System.Drawing.Color.LightGray, Top = 12, Left = 684 };
+        _displayComboBox = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 150, Top = 9, Left = 760, BackColor = System.Drawing.Color.FromArgb(45, 45, 52), ForeColor = System.Drawing.Color.White };
         _displayComboBox.Items.Add(new DisplayOption("Monitor 1 (Laptop)", 1));
         _displayComboBox.Items.Add(new DisplayOption("Monitor 2 (HDMI)", 2));
-        _displayComboBox.Items.Add(new DisplayOption("Todo el Escritorio", 255));
-        _displayComboBox.SelectedIndex = 0;
+        _displayComboBox.Items.Add(new DisplayOption("Dual (Ambas Pantallas)", 3));
+        _displayComboBox.SelectedIndex = 1; // Por defecto Monitor 2 (HDMI nativo)
         _displayComboBox.SelectedIndexChanged += (s, e) =>
         {
-            if (_kvmManager != null && _displayComboBox.SelectedItem is DisplayOption opt)
+            if (_displayComboBox.SelectedItem is DisplayOption opt)
             {
-                _kvmManager.TargetDisplay = opt.Id;
+                _kvmManager?.SendDisplaySwitch(opt.Id);
             }
         };
 
@@ -138,8 +137,9 @@ public class MonitorWindow : Form
         // Inicializar renderizador D3D11
         Shown += (s, e) =>
         {
+            UpdateRenderPanelLayout();
             _renderer = new DirectX11MonitorRenderer(_renderPanel.Handle, _renderPanel.Width, _renderPanel.Height);
-            _renderer.ClearScreen(new Color4(0.05f, 0.05f, 0.07f, 1.0f));
+            _renderer.ClearScreen(new Color4(0.0f, 0.0f, 0.0f, 1.0f));
 
             InitializeKvm();
             RefreshDeviceList();
@@ -153,7 +153,7 @@ public class MonitorWindow : Form
         _kvmManager = new LowLevelKvmManager(targetIp, StreamConfig.DefaultControlPort);
         if (_displayComboBox.SelectedItem is DisplayOption opt)
         {
-            _kvmManager.TargetDisplay = opt.Id;
+            _kvmManager.SendDisplaySwitch(opt.Id);
         }
         _kvmManager.CanSendKeyboard = () => !_ipTextBox.Focused;
         _kvmManager.OnKvmStateChanged += enabled =>
@@ -383,6 +383,38 @@ public class MonitorWindow : Form
 
     private void OnWindowResize(object? sender, EventArgs e)
     {
+        UpdateRenderPanelLayout();
+    }
+
+    private void UpdateRenderPanelLayout()
+    {
+        int availableWidth = ClientSize.Width;
+        int toolbarOffset = (_toolbarPanel.Visible && !_isBorderless) ? _toolbarPanel.Height : 0;
+        int availableHeight = Math.Max(1, ClientSize.Height - toolbarOffset);
+
+        const float targetAspect = 16.0f / 9.0f;
+        float currentAspect = (float)availableWidth / availableHeight;
+
+        int videoWidth, videoHeight, offsetX, offsetY;
+
+        if (currentAspect > targetAspect)
+        {
+            // La ventana es más ancha que 16:9 -> Barras negras laterales (Pillarbox)
+            videoHeight = availableHeight;
+            videoWidth = (int)(availableHeight * targetAspect);
+            offsetX = (availableWidth - videoWidth) / 2;
+            offsetY = toolbarOffset;
+        }
+        else
+        {
+            // La ventana es más alta que 16:9 -> Barras negras superior/inferior (Letterbox)
+            videoWidth = availableWidth;
+            videoHeight = (int)(availableWidth / targetAspect);
+            offsetX = 0;
+            offsetY = toolbarOffset + (availableHeight - videoHeight) / 2;
+        }
+
+        _renderPanel.SetBounds(offsetX, offsetY, Math.Max(1, videoWidth), Math.Max(1, videoHeight));
     }
 
     private void ToggleBorderless()
@@ -407,6 +439,8 @@ public class MonitorWindow : Form
             WindowState = _prevWindowState;
             _isBorderless = false;
         }
+
+        UpdateRenderPanelLayout();
     }
 
     protected override void Dispose(bool disposing)
