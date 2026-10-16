@@ -34,19 +34,24 @@ public class MultiMonitorMappingTests
     }
 
     [Fact]
-    public void MapToVirtualDesktop_DualMode_SplitsCoordinatesCorrectly()
+    public void MapToVirtualDesktop_AutoMode_EdgeTransitionCoordinatesStayValid()
     {
         using var simulator = new Win32InputSimulator(5096);
 
-        // Mitad izquierda (Monitor 1): 16384 -> dentro del rango
-        var (leftX, leftY) = simulator.MapToVirtualDesktop(16384, 30000, 3);
-        Assert.InRange(leftX, 0, 65535);
-        Assert.InRange(leftY, 0, 65535);
+        // En modo auto (0):
+        var (x1, y1) = simulator.MapToVirtualDesktop(10000, 20000, 0);
+        Assert.InRange(x1, 0, 65535);
+        Assert.InRange(y1, 0, 65535);
 
-        // Mitad derecha (Monitor 2): 49152 -> dentro del rango
-        var (rightX, rightY) = simulator.MapToVirtualDesktop(49152, 30000, 3);
-        Assert.InRange(rightX, 0, 65535);
-        Assert.InRange(rightY, 0, 65535);
+        // Si empuja al borde derecho (65500), conmuta
+        var (x2, y2) = simulator.MapToVirtualDesktop(65500, 20000, 0);
+        Assert.InRange(x2, 0, 65535);
+        Assert.InRange(y2, 0, 65535);
+
+        // Si empuja al borde izquierdo (50), conmuta de vuelta
+        var (x3, y3) = simulator.MapToVirtualDesktop(50, 20000, 0);
+        Assert.InRange(x3, 0, 65535);
+        Assert.InRange(y3, 0, 65535);
     }
 
     [Fact]

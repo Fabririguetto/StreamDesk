@@ -6,12 +6,12 @@ using StreamDesk.Common.Input;
 namespace StreamDesk.Agent.Mirroring;
 
 /// <summary>
-/// Servicio de proyección de pantallas en tiempo real para la Notebook.
-/// Permite conmutar la salida HDMI entre:
-/// - Modo 1: Monitor 1 (Laptop en pantalla completa sobre HDMI)
-/// - Modo 2: Monitor 2 (Escritorio nativo de salida HDMI)
-/// - Modo 3: Dual (Pantalla 1 en la mitad izquierda + Pantalla 2 en la mitad derecha)
-/// Utiliza aceleración por hardware DWM vía Win32 sin consumo de red.
+/// Servicio de proyección y conmutación de pantallas en tiempo real para la Notebook.
+/// Conmuta la salida HDMI entre:
+/// - Monitor 1 (Laptop a pantalla completa sobre HDMI al 100% de resolución nativa)
+/// - Monitor 2 (Escritorio nativo de salida HDMI al 100% de resolución nativa)
+/// Responde automáticamente al cruce del mouse entre pantallas (Modo Auto) o a selección manual (F8).
+/// 100% por cable HDMI con aceleración DWM Win32, cero consumo de red y cero latencia.
 /// </summary>
 public class DisplayMirrorService : IDisposable
 {
@@ -40,7 +40,8 @@ public class DisplayMirrorService : IDisposable
     private volatile bool _isRunning = true;
     private bool _disposed;
 
-    private byte _currentMode = 2; // Default: Modo 2 (HDMI nativo sin proyeccion)
+    private byte _displayMode = 0;   // 0 = Auto, 1 = Fixed Monitor 1, 2 = Fixed Monitor 2
+    private byte _activeMonitor = 1; // 1 = Laptop, 2 = HDMI
     private Rectangle _primaryBounds;
     private Rectangle _secondaryBounds;
     private bool _hasSecondary;
@@ -51,6 +52,7 @@ public class DisplayMirrorService : IDisposable
         RefreshMonitorBounds();
 
         _simulator.OnDisplayModeChanged += mode => SetMode(mode);
+        _simulator.OnActiveMonitorChanged += monitor => SetActiveMonitor(monitor);
 
         _uiThread = new Thread(UiThreadStart)
         {
@@ -96,7 +98,37 @@ public class DisplayMirrorService : IDisposable
 
     public void SetMode(byte mode)
     {
-        _currentMode = mode;
+        _displayMode = mode;
+        if (mode == 1)
+        {
+            SetActiveMonitor(1);
+        }
+        else if (mode == 2)
+        {
+            SetActiveMonitor(2);
+        }
+        else // mode == 0 (Auto)
+        {
+            SetActiveMonitor(_simulator.ActiveMonitor);
+        }
+    }
+
+    public void SetActiveMonitor(byte monitor)
+    {
+        if (_displayMode != 0 && monitor != _displayMode)
+        {
+            // En modo manual fijo, respetar la selección manual
+            return;
+        }
+
+        if (_activeMonitor != monitor)
+        {
+            _activeMonitor = monitor;
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.WriteLine($"[Proyector] Conmutando a Pantalla {monitor} {(monitor == 1 ? "(Laptop)" : "(HDMI)")} a resolución 100% nativa.");
+            Console.ResetColor();
+        }
+
         if (_form != null && _form.IsHandleCreated)
         {
             _form.BeginInvoke(() => ApplyModeToForm());
@@ -118,33 +150,22 @@ public class DisplayMirrorService : IDisposable
 
         if (!_hasSecondary)
         {
-            // Solo hay 1 monitor: no proyectar sobre sí mismo
+            // Solo hay 1 monitor: no proyectar
             _form.Visible = false;
             return;
         }
 
-        switch (_currentMode)
+        if (_activeMonitor == 1)
         {
-            case 1: // Monitor 1 (Laptop full sobre HDMI)
-                _form.SetBounds(_secondaryBounds.Left, _secondaryBounds.Top, _secondaryBounds.Width, _secondaryBounds.Height);
-                _form.Visible = true;
-                _form.BringToFront();
-                Console.WriteLine("[Proyector] Modo 1 activo: Proyectando Pantalla 1 en pantalla completa sobre HDMI.");
-                break;
-
-            case 3: // Dual (Lado a Lado: mitad izquierda Pantalla 1, mitad derecha Pantalla 2)
-                int halfWidth = _secondaryBounds.Width / 2;
-                _form.SetBounds(_secondaryBounds.Left, _secondaryBounds.Top, halfWidth, _secondaryBounds.Height);
-                _form.Visible = true;
-                _form.BringToFront();
-                Console.WriteLine("[Proyector] Modo 3 activo: Dual Lado a Lado (50% Pantalla 1 / 50% Pantalla 2).");
-                break;
-
-            case 2: // Monitor 2 (HDMI nativo sin overlay)
-            default:
-                _form.Visible = false;
-                Console.WriteLine("[Proyector] Modo 2 activo: Mostrando salida nativa HDMI (sin proyector).");
-                break;
+            // Proyectar Monitor 1 (Laptop) en pantalla completa sobre Monitor 2 (HDMI) a 100% resolución
+            _form.SetBounds(_secondaryBounds.Left, _secondaryBounds.Top, _secondaryBounds.Width, _secondaryBounds.Height);
+            _form.Visible = true;
+            _form.BringToFront();
+        }
+        else
+        {
+            // Ocultar proyección para mostrar el escritorio nativo del Monitor 2 a 100% resolución
+            _form.Visible = false;
         }
     }
 
@@ -154,7 +175,7 @@ public class DisplayMirrorService : IDisposable
         {
             try
             {
-                if (_hasSecondary && (_currentMode == 1 || _currentMode == 3) && _form != null && _form.IsHandleCreated && _form.Visible)
+                if (_hasSecondary && _activeMonitor == 1 && _form != null && _form.IsHandleCreated && _form.Visible)
                 {
                     IntPtr hwnd = _form.Handle;
                     int destW = _form.ClientSize.Width;
@@ -185,8 +206,8 @@ public class DisplayMirrorService : IDisposable
                 }
                 else
                 {
-                    // En modo nativo o inactivo, dormir más para 0% consumo
-                    Thread.Sleep(100);
+                    // En modo Monitor 2 nativo, dormir más para 0% consumo de CPU
+                    Thread.Sleep(50);
                 }
             }
             catch
@@ -241,7 +262,7 @@ public class DisplayMirrorService : IDisposable
 
         protected override void OnPaintBackground(PaintEventArgs e)
         {
-            // No pintar fondo para evitar parpadeos (flicker-free)
+            // Flicker-free
         }
 
         protected override void WndProc(ref Message m)

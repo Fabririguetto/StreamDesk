@@ -86,16 +86,17 @@ public class MonitorWindow : Form
         _ipTextBox.TextChanged += (s, e) => _kvmManager?.UpdateTargetIp(_ipTextBox.Text.Trim());
 
         var displayLabel = new Label { Text = "Pantalla (F8):", AutoSize = true, ForeColor = System.Drawing.Color.LightGray, Top = 12, Left = 684 };
-        _displayComboBox = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 150, Top = 9, Left = 760, BackColor = System.Drawing.Color.FromArgb(45, 45, 52), ForeColor = System.Drawing.Color.White };
-        _displayComboBox.Items.Add(new DisplayOption("Monitor 1 (Laptop)", 1));
-        _displayComboBox.Items.Add(new DisplayOption("Monitor 2 (HDMI)", 2));
-        _displayComboBox.Items.Add(new DisplayOption("Dual (Ambas Pantallas)", 3));
-        _displayComboBox.SelectedIndex = 1; // Por defecto Monitor 2 (HDMI nativo)
+        _displayComboBox = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 155, Top = 9, Left = 760, BackColor = System.Drawing.Color.FromArgb(45, 45, 52), ForeColor = System.Drawing.Color.White };
+        _displayComboBox.Items.Add(new DisplayOption("Auto (Borde Mouse)", 0));
+        _displayComboBox.Items.Add(new DisplayOption("Fijar Monitor 1 (Laptop)", 1));
+        _displayComboBox.Items.Add(new DisplayOption("Fijar Monitor 2 (HDMI)", 2));
+        _displayComboBox.SelectedIndex = 0; // Por defecto Auto (Detección automática por borde de mouse)
         _displayComboBox.SelectedIndexChanged += (s, e) =>
         {
             if (_displayComboBox.SelectedItem is DisplayOption opt)
             {
                 _kvmManager?.SendDisplaySwitch(opt.Id);
+                UpdateActiveMonitorUi(opt.Id == 0 ? (byte)1 : opt.Id);
             }
         };
 
@@ -167,6 +168,26 @@ public class MonitorWindow : Form
                 UpdateKvmUi(enabled);
             }
         };
+
+        _kvmManager.OnRemoteDisplayChanged += monitor =>
+        {
+            if (InvokeRequired)
+            {
+                BeginInvoke(() => UpdateActiveMonitorUi(monitor));
+            }
+            else
+            {
+                UpdateActiveMonitorUi(monitor);
+            }
+        };
+    }
+
+    private void UpdateActiveMonitorUi(byte monitor)
+    {
+        bool isAuto = _displayComboBox.SelectedIndex == 0;
+        string monitorName = monitor == 1 ? "Monitor 1 (Laptop)" : "Monitor 2 (HDMI)";
+        _statusLabel.Text = isAuto ? $"Auto: {monitorName}" : monitorName;
+        _statusLabel.ForeColor = isAuto ? System.Drawing.Color.Cyan : System.Drawing.Color.LimeGreen;
     }
 
     private void ToggleKvmControl()

@@ -70,9 +70,12 @@ public class LowLevelKvmManager : IDisposable
     public bool IsKvmActive => _isControlEnabled;
     public Func<bool>? CanSendKeyboard { get; set; }
     public event Action<bool>? OnKvmStateChanged;
+    public event Action<byte>? OnRemoteDisplayChanged;
+
+    private readonly Thread _receiveThread;
 
     /// <summary>
-    /// Monitor de destino en la Notebook: 0 = Auto / Secundario HDMI, 1 = Pantalla 1, 2 = Pantalla 2, 255 = Todo el escritorio extendido
+    /// Monitor de destino en la Notebook: 0 = Auto (Detección por Mouse), 1 = Pantalla 1, 2 = Pantalla 2
     /// </summary>
     public byte TargetDisplay { get; set; } = 0;
 
@@ -101,6 +104,13 @@ public class LowLevelKvmManager : IDisposable
             _udpSocket.IOControl(SIO_UDP_CONNRESET, new byte[] { 0 }, null);
         }
         catch { }
+
+        _receiveThread = new Thread(ReceiveLoop)
+        {
+            Name = "KVM Remote Status Receiver Thread",
+            IsBackground = true
+        };
+        _receiveThread.Start();
 
         InstallKeyboardHook();
     }
@@ -237,6 +247,32 @@ public class LowLevelKvmManager : IDisposable
             Timestamp = (uint)Environment.TickCount
         };
         SendPacket(ref packet);
+    }
+
+    private void ReceiveLoop()
+    {
+        byte[] buffer = new byte[64];
+        EndPoint remoteEp = new IPEndPoint(IPAddress.Any, 0);
+
+        while (!_disposed)
+        {
+            try
+            {
+                int received = _udpSocket.ReceiveFrom(buffer, ref remoteEp);
+                if (received >= Marshal.SizeOf<ControlPacket>())
+                {
+                    var packet = ControlPacket.Deserialize(buffer);
+                    if (packet.PacketType == ControlPacketType.SwitchDisplay)
+                    {
+                        OnRemoteDisplayChanged?.Invoke(packet.TargetDisplay);
+                    }
+                }
+            }
+            catch
+            {
+                if (_disposed) break;
+            }
+        }
     }
 
     private void SendPacket(ref ControlPacket packet)

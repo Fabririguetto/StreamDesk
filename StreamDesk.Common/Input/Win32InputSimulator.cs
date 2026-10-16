@@ -115,10 +115,12 @@ public class Win32InputSimulator : IDisposable
     private bool _disposed;
 
     public IReadOnlyList<DisplayInfo> Displays => _displays;
-    public byte ActiveDisplayMode { get; set; } = 2; // 1 = Laptop, 2 = HDMI, 3 = Dual
+    public byte ActiveDisplayMode { get; set; } = 0; // 0 = Auto, 1 = Laptop, 2 = HDMI
+    public byte ActiveMonitor { get; set; } = 1;     // 1 = Laptop, 2 = HDMI
     public event Action<IPEndPoint>? OnControllerConnected;
     public event Action<ControlPacketType>? OnPacketReceived;
     public event Action<byte>? OnDisplayModeChanged;
+    public event Action<byte>? OnActiveMonitorChanged;
 
     public Win32InputSimulator(int controlPort = 5005)
     {
@@ -136,6 +138,27 @@ public class Win32InputSimulator : IDisposable
             Priority = ThreadPriority.Highest
         };
         _listenerThread.Start();
+
+        OnActiveMonitorChanged += monitor => NotifyControllerDisplayChanged(monitor);
+    }
+
+    private void NotifyControllerDisplayChanged(byte monitor)
+    {
+        if (_lastControllerEp != null)
+        {
+            try
+            {
+                var packet = new ControlPacket
+                {
+                    PacketType = ControlPacketType.SwitchDisplay,
+                    TargetDisplay = monitor,
+                    Timestamp = (uint)Environment.TickCount
+                };
+                byte[] data = ControlPacket.Serialize(ref packet);
+                _udpClient.Send(data, data.Length, _lastControllerEp);
+            }
+            catch { }
+        }
     }
 
     public void RefreshDisplays()
@@ -187,28 +210,61 @@ public class Win32InputSimulator : IDisposable
 
             var primary = _displays.FirstOrDefault(d => d.IsPrimary) ?? _displays[0];
             var secondary = _displays.FirstOrDefault(d => !d.IsPrimary) ?? primary;
+            bool secondaryIsRight = secondary.Bounds.Left >= primary.Bounds.Left;
 
-            if (targetDisplay == 3) // Dual: Ambas pantallas lado a lado
+            if (targetDisplay == 0) // Auto: Detección y transición por bordes del mouse
             {
-                if (normX < 32768)
+                if (ActiveMonitor == 1)
                 {
-                    // Mitad izquierda: Pantalla 1 (Laptop)
-                    target = primary;
-                    finalNormX = (ushort)Math.Clamp(((long)normX * 65535) / 32767, 0, 65535);
+                    if (secondaryIsRight && normX >= 65450)
+                    {
+                        ActiveMonitor = 2;
+                        OnActiveMonitorChanged?.Invoke(2);
+                        target = secondary;
+                        finalNormX = 100;
+                    }
+                    else if (!secondaryIsRight && normX <= 100)
+                    {
+                        ActiveMonitor = 2;
+                        OnActiveMonitorChanged?.Invoke(2);
+                        target = secondary;
+                        finalNormX = 65450;
+                    }
+                    else
+                    {
+                        target = primary;
+                    }
                 }
-                else
+                else // ActiveMonitor == 2
                 {
-                    // Mitad derecha: Pantalla 2 (HDMI)
-                    target = secondary;
-                    finalNormX = (ushort)Math.Clamp(((long)(normX - 32768) * 65535) / 32767, 0, 65535);
+                    if (secondaryIsRight && normX <= 100)
+                    {
+                        ActiveMonitor = 1;
+                        OnActiveMonitorChanged?.Invoke(1);
+                        target = primary;
+                        finalNormX = 65450;
+                    }
+                    else if (!secondaryIsRight && normX >= 65450)
+                    {
+                        ActiveMonitor = 1;
+                        OnActiveMonitorChanged?.Invoke(1);
+                        target = primary;
+                        finalNormX = 100;
+                    }
+                    else
+                    {
+                        target = secondary;
+                    }
                 }
             }
-            else if (targetDisplay == 1) // Pantalla 1 (Laptop)
+            else if (targetDisplay == 1) // Fijar Pantalla 1 (Laptop)
             {
+                ActiveMonitor = 1;
                 target = primary;
             }
-            else if (targetDisplay == 2 || targetDisplay == 0) // Pantalla 2 (HDMI) o Auto
+            else if (targetDisplay == 2) // Fijar Pantalla 2 (HDMI)
             {
+                ActiveMonitor = 2;
                 target = secondary;
             }
             else
@@ -327,6 +383,16 @@ public class Win32InputSimulator : IDisposable
 
             case ControlPacketType.SwitchDisplay:
                 ActiveDisplayMode = packet.TargetDisplay;
+                if (packet.TargetDisplay == 1)
+                {
+                    ActiveMonitor = 1;
+                    OnActiveMonitorChanged?.Invoke(1);
+                }
+                else if (packet.TargetDisplay == 2)
+                {
+                    ActiveMonitor = 2;
+                    OnActiveMonitorChanged?.Invoke(2);
+                }
                 OnDisplayModeChanged?.Invoke(packet.TargetDisplay);
                 break;
         }
